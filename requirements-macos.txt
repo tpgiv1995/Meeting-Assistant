@@ -1,0 +1,85 @@
+# ── AI providers ──────────────────────────────────────────────────────────────
+anthropic>=0.40.0
+openai>=1.0.0
+
+# ── TLS trust (corporate proxies / Cloudflare WARP) ──────────────────────────
+# Verifies HTTPS against the OS certificate store instead of certifi, so a
+# corporate TLS-inspection CA (WARP/Zero Trust) is trusted without disabling
+# verification. core/config.py calls truststore.inject_into_ssl() at startup.
+truststore>=0.9.1
+
+# ── Transcription (Windows / CUDA / CPU) ─────────────────────────────────────
+# faster-whisper is the engine on Windows. On macOS we use mlx-whisper instead
+# (Metal-accelerated via Apple's MLX framework); faster-whisper has no Metal
+# backend. The transcriber dispatches to the right engine at import time.
+faster-whisper>=1.0.0; sys_platform == "win32"
+
+# ── Transcription (macOS / Apple Silicon) ────────────────────────────────────
+mlx-whisper>=0.4.0; sys_platform == "darwin"
+
+# ── NVIDIA CUDA DLLs (Windows only) ──────────────────────────────────────────
+# ctranslate2 (used by faster-whisper) needs cublas and cudnn DLLs to run on
+# GPU. These packages install the DLLs under site-packages/nvidia/*/bin/;
+# transcriber.py registers those paths via os.add_dll_directory() at startup
+# so no system CUDA Toolkit installation is required.
+nvidia-cublas-cu12; sys_platform == "win32"
+nvidia-cudnn-cu12; sys_platform == "win32"
+
+# ── Speaker diarization ───────────────────────────────────────────────────────
+# Streaming diarization uses pyannote segmentation + embedding models directly.
+# On Windows, launch.bat installs the CUDA-enabled torch variant first (via the
+# PyTorch index URL) so this resolves to the already-installed GPU build.
+# On macOS arm64, the default wheel is MPS-enabled.
+torch>=2.0.0
+torchaudio>=2.0.0
+pyannote.audio>=3.1.0,<4.0.0
+# Pin speechbrain to avoid LazyModule crashes in >=1.1 that break
+# inspect.stack() during pyannote/pytorch_lightning model loading.
+speechbrain==1.0.3
+
+# ── Audio capture (Windows) ──────────────────────────────────────────────────
+# pyaudiowpatch is a fork of PyAudio with Windows WASAPI loopback support.
+# Its wheel bundles PortAudio, so no system library install is needed.
+pyaudiowpatch>=0.2.12.7; sys_platform == "win32"
+
+# ── Audio capture (macOS) ────────────────────────────────────────────────────
+# sounddevice talks to CoreAudio. System-audio loopback comes from BlackHole
+# (auto-installed by mac_audio_bootstrap.py on first launch).
+sounddevice>=0.4.6; sys_platform == "darwin"
+
+# ── macOS native APIs (PyObjC) ───────────────────────────────────────────────
+# CoreAudio  - aggregate device creation for BlackHole + speakers
+# Quartz     - display enumeration for screen recorder
+# AVFoundation - misc media APIs (probing, device strings)
+pyobjc-framework-CoreAudio; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-AVFoundation; sys_platform == "darwin"
+
+# ── Echo cancellation ───────────────────────────────────────────────────────
+# WebRTC AEC3 bindings - removes speaker echo from the microphone signal.
+# Cross-platform (algorithm only, no OS-specific audio stack).
+aec-audio-processing>=1.0.0
+
+# ── Signal processing / numerics ──────────────────────────────────────────────
+scipy>=1.11.0
+numpy>=1.26.0
+# Pinned to ensure a prebuilt wheel is available for Python 3.12 on Windows.
+# diart → pyannote.audio pulls this in transitively; older versions require
+# MSVC to compile from source and will fail on machines without Build Tools.
+matplotlib>=3.8.0
+
+# ── Web server & utilities ────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+flask>=3.0.0
+
+# ── Semantic search ──────────────────────────────────────────────────────────
+# Uses all-MiniLM-L6-v2 (~80 MB) for meaning-based session search.
+# torch is already installed (needed by diart), so this adds minimal overhead.
+sentence-transformers>=2.2.0
+
+# ── System tray ───────────────────────────────────────────────────────────────
+# pystray is cross-platform; on macOS it shows up as a menu bar icon and uses
+# template-image styling configured in tray.py.
+pystray>=0.19.0
+Pillow>=10.0.0
+winotify>=1.1.0; sys_platform == "win32"

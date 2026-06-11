@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Assistant</title>
+  <link rel="icon" id="favicon" href="/static/images/logo.png" type="image/png">
+  <link rel="stylesheet" href="/static/fontAwesome/css/all.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/morphdom@2/dist/morphdom-umd.min.js"></script>
+  <script>
+    // Apply saved theme synchronously (pre-paint) to avoid flash-of-wrong-theme.
+    (function () {
+      try {
+        var c = JSON.parse(localStorage.getItem('ma-layout') || '{}');
+        var mode = c.theme_mode || 'system';
+        var accent = c.theme_accent || 'blue';
+        var effective = mode;
+        if (mode === 'system') {
+          effective = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.themeMode = effective;
+        if (accent && accent !== 'blue') document.documentElement.dataset.accent = accent;
+        if (effective === 'light') {
+          var link = document.getElementById('hljs-theme');
+          if (link) link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+        }
+        if (accent === 'custom') {
+          var palette = c['theme_custom_' + effective];
+          if (palette && typeof palette === 'object') {
+            var root = document.documentElement;
+            for (var k in palette) { if (palette.hasOwnProperty(k)) root.style.setProperty(k, palette[k]); }
+          }
+        }
+      } catch (_) {}
+    })();
+  </script>
+</head>
+<body>
+
+<div class="home-layout">
+
+  {% include "_sidebar.html" %}
+
+  <!-- ── Home Main Area ──────────────────────────────────────────────────── -->
+  <div class="home-main">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="icon-btn sidebar-toggle-btn" id="sidebar-open-btn"
+                onclick="toggleSidebar()" title="Open sessions sidebar"
+                style="display:none"><i class="fa-solid fa-bars"></i></button>
+        <img src="/static/images/logo.png" alt="" class="brand-icon">
+        <span class="brand-name">Meeting Assistant</span>
+        <nav class="home-nav">
+          <a href="/" class="home-nav-item active"><i class="fa-solid fa-house"></i> Home</a>
+          <a href="/session" class="home-nav-item"><i class="fa-solid fa-list"></i> Sessions</a>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <button id="record-btn" class="btn btn-record" onclick="toggleRecording()" disabled>
+          <span class="btn-icon"><i class="fa-solid fa-play"></i></span> Start Recording
+        </button>
+        <div class="status-pill" id="status-pill">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Loading model…</span>
+          <span id="recording-duration" class="recording-duration hidden"></span>
+        </div>
+        <div class="topbar-sep"></div>
+        <button class="btn btn-update hidden" id="topbar-update-btn" onclick="topbarApplyUpdate()" title="Update available">
+          <i class="fa-solid fa-download"></i> Update
+        </button>
+        <button class="btn btn-settings btn-icon-only" onclick="openSettings()" title="Settings">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+        <div class="power-menu-wrap">
+          <button class="btn btn-danger btn-icon-only" onclick="togglePowerMenu()" title="Power options">
+            <i class="fa-solid fa-power-off"></i>
+          </button>
+          <div class="power-menu hidden" id="power-menu">
+            <button onclick="confirmShutdown(); closePowerMenu()"><i class="fa-solid fa-power-off"></i> Shut Down</button>
+            <button onclick="confirmRestart(); closePowerMenu()"><i class="fa-solid fa-rotate-right"></i> Restart</button>
+            <button class="hidden" id="power-menu-update" onclick="confirmUpdateRestart(); closePowerMenu()"><i class="fa-solid fa-download"></i> Update &amp; Restart</button>
+          </div>
+        </div>
+        <div class="topbar-sep"></div>
+        <div class="home-search-wrap">
+          <i class="fa-solid fa-magnifying-glass home-search-icon"></i>
+          <input type="text" id="home-search-input" class="home-search-input"
+                 placeholder="Search all sessions..." autocomplete="off" spellcheck="false">
+          <button class="home-search-clear hidden" id="home-search-clear"
+                  onclick="clearHomeSearch()"><i class="fa-solid fa-xmark"></i></button>
+          <span class="home-search-ai" id="home-search-ai" title="Includes AI-powered semantic search when available"><i class="fa-solid fa-brain"></i></span>
+        </div>
+        <div id="home-search-results" class="home-search-results hidden"></div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="home-content">
+
+      <!-- Left: Global Chat -->
+      <div class="home-chat-area">
+        <div class="home-chat-panel">
+          <!-- Conversation sidebar -->
+          <div class="home-conv-sidebar" id="home-conv-sidebar">
+            <div class="home-conv-header">
+              <span class="home-conv-title">Chats</span>
+              <button class="icon-btn" onclick="newGlobalConversation()" title="New chat">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </div>
+            <div class="home-conv-list" id="home-conv-list">
+              <p class="home-conv-empty">No conversations yet</p>
+            </div>
+          </div>
+
+          <!-- Chat area -->
+          <div class="home-chat-main">
+            <div class="home-chat-header">
+              <button class="icon-btn home-conv-toggle" id="home-conv-toggle"
+                      onclick="toggleConvSidebar()" title="Toggle chat list">
+                <i class="fa-solid fa-sidebar"></i>
+              </button>
+              <div class="col-title-wrap home-chat-title-wrap">
+                <span class="home-chat-title" id="home-chat-title">Global Chat</span>
+                <span class="col-subtitle" id="global-chat-model-label"></span>
+              </div>
+              <div class="home-chat-actions">
+                <button class="icon-btn" title="Clear chat" onclick="clearGlobalChat()">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+            <div id="global-chat-messages" class="col-body chat-body">
+              <div class="home-chat-welcome" id="home-chat-welcome">
+                <div class="home-welcome-icon">
+                  <i class="fa-solid fa-comments"></i>
+                </div>
+                <h2 class="home-welcome-title">Ask about your meetings</h2>
+                <p class="home-welcome-subtitle">Search transcripts, find discussions, and get insights across all your recorded sessions.</p>
+                <div class="home-welcome-suggestions" id="home-welcome-suggestions">
+                  <button class="home-suggestion-chip" onclick="useSuggestion(this)">What were the key decisions from recent meetings?</button>
+                  <button class="home-suggestion-chip" onclick="useSuggestion(this)">Summarize discussions about deadlines</button>
+                  <button class="home-suggestion-chip" onclick="useSuggestion(this)">Who are the most active speakers?</button>
+                </div>
+              </div>
+            </div>
+            <div class="chat-input-area">
+              <div class="chat-input-wrap">
+                <div class="model-picker-wrap model-picker-chat-wrap">
+                  <button class="chat-model-picker-btn" id="global-chat-model-btn"
+                          title="Global chat model" onclick="toggleModelPicker('global_chat')">
+                    <i class="fa-solid fa-microchip"></i>
+                  </button>
+                  <div class="model-picker-panel model-picker-panel-up hidden" id="global-chat-model-picker"></div>
+                </div>
+                <textarea
+                  id="global-chat-input"
+                  placeholder="Ask about all your meetings..."
+                  rows="1"
+                  onkeydown="handleGlobalChatKey(event)"
+                  oninput="autogrowGlobalInput()"
+                ></textarea>
+                <button id="global-send-btn" class="chat-send-btn" onclick="sendGlobalMessage()" title="Send message">
+                  <i class="fa-solid fa-arrow-up"></i>
+                </button>
+                <button id="global-stop-btn" class="chat-stop-btn hidden" onclick="stopGlobalChat()" title="Stop generating">
+                  <i class="fa-solid fa-stop"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Dashboard -->
+      <div class="home-widgets">
+
+        <!-- Hero Stats Row -->
+        <div class="home-widget home-hero-stats">
+          <div class="home-hero-stat">
+            <div class="home-hero-icon meetings"><i class="fa-solid fa-video"></i></div>
+            <div class="home-hero-data">
+              <div class="home-hero-value" id="stat-sessions">-</div>
+              <div class="home-hero-label">Meetings</div>
+            </div>
+          </div>
+          <div class="home-hero-divider"></div>
+          <div class="home-hero-stat">
+            <div class="home-hero-icon time"><i class="fa-solid fa-clock"></i></div>
+            <div class="home-hero-data">
+              <div class="home-hero-value" id="stat-time">-</div>
+              <div class="home-hero-label">Recorded</div>
+            </div>
+          </div>
+          <div class="home-hero-divider"></div>
+          <div class="home-hero-stat">
+            <div class="home-hero-icon speakers"><i class="fa-solid fa-users"></i></div>
+            <div class="home-hero-data">
+              <div class="home-hero-value" id="stat-speakers">-</div>
+              <div class="home-hero-label">Speakers</div>
+            </div>
+          </div>
+          <div class="home-hero-divider"></div>
+          <div class="home-hero-stat">
+            <div class="home-hero-icon words"><i class="fa-solid fa-font"></i></div>
+            <div class="home-hero-data">
+              <div class="home-hero-value" id="stat-words">-</div>
+              <div class="home-hero-label">Words</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity Heatmap -->
+        <div class="home-widget">
+          <div class="home-widget-header">
+            <span class="home-widget-title"><i class="fa-solid fa-calendar-days"></i> Activity</span>
+            <span class="home-widget-subtitle" id="home-activity-summary">-</span>
+          </div>
+          <div class="home-activity-chart" id="home-activity-chart"></div>
+        </div>
+
+        <!-- Two-column row: Recent Sessions + Top Speakers -->
+        <div class="home-widget-row">
+          <div class="home-widget home-widget-grow">
+            <div class="home-widget-header">
+              <span class="home-widget-title"><i class="fa-solid fa-clock-rotate-left"></i> Recent Sessions</span>
+              <a href="/session" class="home-widget-link">View all</a>
+            </div>
+            <div class="home-recent-list" id="home-recent-list">
+              <p class="home-recent-empty">No sessions yet. Start your first recording!</p>
+            </div>
+          </div>
+          <div class="home-widget home-widget-grow" id="home-speakers-widget">
+            <div class="home-widget-header">
+              <span class="home-widget-title"><i class="fa-solid fa-microphone-lines"></i> Top Speakers</span>
+            </div>
+            <div class="home-speakers-list" id="home-speakers-list">
+              <p class="home-speakers-empty">No speakers identified yet.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Voice Library overlay ─────────────────────────────────────────────── -->
+<div class="overlay hidden" id="fingerprint-panel-overlay" onclick="closeFingerprintPanelOnOverlay(event)">
+  <div class="dialog fingerprint-panel-dialog">
+    <div class="fingerprint-panel-header">
+      <h3>Voice Library</h3>
+      <p class="fingerprint-panel-subtitle">Cross-session speaker identity profiles</p>
+      <button class="icon-btn fingerprint-panel-close" onclick="closeFingerprintPanel()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="fp-tab-bar">
+      <button class="fp-tab active" data-tab="profiles" onclick="fpSwitchTab('profiles')">Profiles</button>
+      <button class="fp-tab" data-tab="match" onclick="fpSwitchTab('match')">Match Speakers</button>
+    </div>
+    <div class="fingerprint-panel-body">
+      <div class="fp-tab-content" id="fp-tab-profiles">
+        <div class="fingerprint-panel-list" id="fingerprint-profile-list">
+          <div class="fp-list-toolbar">
+            <input type="text" class="fp-search-input" id="fp-search-input" placeholder="Search profiles..." oninput="_fpFilterList()" />
+            <button type="button" class="icon-btn fp-select-toggle" id="fp-select-toggle" title="Select multiple" onclick="_fpToggleSelectMode()"><i class="fa-solid fa-check-double"></i></button>
+          </div>
+          <div class="fp-select-bar hidden" id="fp-select-bar">
+            <label class="fp-select-all-label"><input type="checkbox" id="fp-select-all" onchange="_fpToggleSelectAll(this.checked)" /> All</label>
+            <span class="fp-select-count" id="fp-select-count">0 selected</span>
+          </div>
+          <div class="fp-profile-scroll" id="fp-profile-scroll">
+            <div class="fp-panel-empty">No voice profiles yet.</div>
+          </div>
+          <div class="fp-bulk-actions hidden" id="fp-bulk-actions">
+            <button class="speaker-manager-btn speaker-manager-btn-secondary fp-bulk-btn" onclick="_fpBulkOptimize()" title="Optimize selected"><i class="fa-duotone fa-wand-magic-sparkles"></i> Optimize</button>
+            <button class="speaker-manager-btn speaker-manager-btn-secondary fp-bulk-btn" onclick="_fpBulkMerge()" title="Merge selected into one"><i class="fa-solid fa-merge"></i> Merge</button>
+            <button class="speaker-manager-btn fp-detail-delete-btn fp-bulk-btn" onclick="_fpBulkDelete()" title="Delete selected"><i class="fa-solid fa-trash"></i> Delete</button>
+          </div>
+        </div>
+        <div class="fingerprint-panel-detail hidden" id="fingerprint-profile-detail">
+          <div class="fp-panel-top">
+              <div class="fp-detail-name-row">
+              <input class="fp-detail-name-input" id="fp-detail-name" placeholder="Name" />
+              <div class="speaker-color-grid fp-detail-color-grid" id="fp-detail-color-grid"></div>
+              </div>
+              <div class="fp-detail-meta" id="fp-detail-meta"></div>
+              <div class="fp-detail-sessions" id="fp-detail-sessions"></div>
+          </div>
+
+          <div class="fp-panel-bottom">
+              <div class="fp-detail-actions">
+                  <div class="actions-left">
+                      <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpDetailSave()">Save</button>
+                      <button class="speaker-manager-btn speaker-manager-btn-secondary" onclick="fpDetailOptimize()">Optimize</button>
+                  </div>
+              <div class="fp-detail-merge-wrap">
+                  <select id="fp-detail-merge-sel" class="fp-detail-merge-sel">
+                  <option value="">Merge into…</option>
+                  </select>
+                  <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpDetailMerge()">Merge</button>
+              </div>
+              <button class="speaker-manager-btn fp-detail-delete-btn" onclick="fpDetailDelete()">Delete</button>
+          </div>
+          </div>
+        </div>
+        <div class="fingerprint-panel-new" id="fingerprint-panel-new" style="display:none">
+          <input class="fp-detail-name-input" id="fp-new-name" placeholder="New profile name" />
+          <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpCreateProfile()">Create</button>
+          <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpCancelNew()">Cancel</button>
+        </div>
+      </div>
+      <div class="fp-tab-content hidden" id="fp-tab-match">
+        <div class="fp-match-empty hidden" id="fp-match-empty">No unlinked speakers found across your meetings.</div>
+        <div class="fp-match-scroll" id="fp-match-scroll"></div>
+        <div class="fp-match-actions hidden" id="fp-match-actions">
+          <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpBulkLinkAll()">Apply All</button>
+        </div>
+      </div>
+    </div>
+    <div class="fingerprint-panel-footer" id="fp-footer-profiles">
+      <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpShowNew()"><i class="fa-solid fa-plus"></i> New Profile</button>
+    </div>
+  </div>
+</div>
+
+{% include "_settings.html" %}
+
+<!-- ── Import drop zone overlay ──────────────────────────────────────── -->
+<div class="import-drop-overlay hidden" id="import-drop-overlay">
+  <div class="import-drop-content">
+    <i class="fa-solid fa-file-import import-drop-icon"></i>
+    <span class="import-drop-text">Drop meeting export to import</span>
+  </div>
+</div>
+
+<!-- ── Import progress toast ─────────────────────────────────────────── -->
+<div class="import-toast hidden" id="import-toast">
+  <div class="import-toast-inner">
+    <i class="fa-solid fa-spinner fa-spin import-toast-icon" id="import-toast-icon"></i>
+    <span id="import-toast-text">Importing meeting…</span>
+  </div>
+</div>
+
+<!-- Hidden stubs for app.js compatibility -->
+<div id="transcript" style="display:none"></div>
+<div id="summary" style="display:none"></div>
+<div id="chat-messages" style="display:none"></div>
+<canvas id="brand-viz-canvas" style="display:none"></canvas>
+<span id="topbar-session-title" style="display:none"></span>
+<div id="auto-summary-btn" style="display:none"></div>
+<audio id="playback-audio" style="display:none"></audio>
+
+<script>
+  // Flag so app.js knows this is the home page
+  window._isHomePage = true;
+</script>
+<script src="/static/app.js"></script>
+<script>
+  // Override session-page functions that don't work on the home page
+  function newSession() { window.location.href = '/session'; }
+</script>
+<script src="/static/home.js"></script>
+</body>
+</html>

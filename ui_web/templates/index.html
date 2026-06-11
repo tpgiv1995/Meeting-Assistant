@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Assistant</title>
+  <link rel="icon" id="favicon" href="/static/images/logo.png" type="image/png">
+  <link rel="stylesheet" href="/static/fontAwesome/css/all.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/morphdom@2/dist/morphdom-umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.min.js"></script>
+  <script>
+    // Apply saved theme synchronously (pre-paint) to avoid flash-of-wrong-theme.
+    (function () {
+      try {
+        var c = JSON.parse(localStorage.getItem('ma-layout') || '{}');
+        var mode = c.theme_mode || 'system';
+        var accent = c.theme_accent || 'blue';
+        var effective = mode;
+        if (mode === 'system') {
+          effective = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.themeMode = effective;
+        if (accent && accent !== 'blue') document.documentElement.dataset.accent = accent;
+        // Swap hljs stylesheet for light mode
+        if (effective === 'light') {
+          var link = document.getElementById('hljs-theme');
+          if (link) link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+        }
+        // Apply cached custom palette inline (per-mode) so custom themes don't flash
+        if (accent === 'custom') {
+          var palette = c['theme_custom_' + effective];
+          if (palette && typeof palette === 'object') {
+            var root = document.documentElement;
+            for (var k in palette) { if (palette.hasOwnProperty(k)) root.style.setProperty(k, palette[k]); }
+          }
+        }
+      } catch (_) {}
+    })();
+  </script>
+</head>
+<body>
+
+<div class="app-layout">
+
+  {% include "_sidebar.html" %}
+
+  <!-- ── Main area ────────────────────────────────────────────────────── -->
+  <div class="main-area">
+
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="icon-btn sidebar-toggle-btn" id="sidebar-open-btn"
+                onclick="toggleSidebar()" title="Open sessions sidebar"
+                style="display:none"><i class="fa-solid fa-bars"></i></button>
+        <div class="brand-icon-wrap" id="brand-icon-wrap">
+          <canvas id="brand-viz-canvas" class="brand-viz-canvas"></canvas>
+          <img id="brand-icon" class="brand-icon" src="/static/images/logo.png" alt="">
+        </div>
+        <span class="brand-name">Meeting Assistant</span>
+        <nav class="home-nav">
+          <a href="/" class="home-nav-item"><i class="fa-solid fa-house"></i> Home</a>
+          <a href="/session" class="home-nav-item active"><i class="fa-solid fa-list"></i> Sessions</a>
+          <button class="home-nav-item upload-nav-btn" id="upload-audio-btn"
+                  onclick="document.getElementById('upload-audio-input').click()"
+                  title="Upload audio or video file">
+            <i class="fa-solid fa-upload"></i>
+          </button>
+          <input type="file" id="upload-audio-input" accept="audio/*,video/*"
+                 style="display:none" onchange="handleAudioUpload(this)">
+          <button class="home-nav-item upload-nav-btn" onclick="openImportPicker()"
+                  title="Import meeting package (.zip)">
+            <i class="fa-solid fa-file-import"></i>
+          </button>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <span id="topbar-session-title" class="topbar-session-title hidden"></span>
+        <button id="record-btn" class="btn btn-record" onclick="toggleRecording()" disabled>
+          <span class="btn-icon"><i class="fa-solid fa-play"></i></span> Start Recording
+        </button>
+        <div class="status-pill" id="status-pill">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Loading model…</span>
+          <span id="recording-duration" class="recording-duration hidden"></span>
+        </div>
+        <div class="topbar-sep"></div>
+        <button class="btn btn-update hidden" id="topbar-update-btn" onclick="topbarApplyUpdate()" title="Update available">
+          <i class="fa-solid fa-download"></i> Update
+        </button>
+        <button class="btn btn-settings btn-icon-only" onclick="openSettings()" title="Settings">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+        <div class="power-menu-wrap">
+          <button class="btn btn-danger btn-icon-only" onclick="togglePowerMenu()" title="Power options">
+            <i class="fa-solid fa-power-off"></i>
+          </button>
+          <div class="power-menu hidden" id="power-menu">
+            <button onclick="confirmShutdown(); closePowerMenu()"><i class="fa-solid fa-power-off"></i> Shut Down</button>
+            <button onclick="confirmRestart(); closePowerMenu()"><i class="fa-solid fa-rotate-right"></i> Restart</button>
+            <button class="hidden" id="power-menu-update" onclick="confirmUpdateRestart(); closePowerMenu()"><i class="fa-solid fa-download"></i> Update &amp; Restart</button>
+          </div>
+        </div>
+        <div class="topbar-sep"></div>
+        <div class="pane-toggle-group">
+          <button class="pane-toggle-btn active" id="pane-toggle-transcript"
+                  onclick="togglePane(0)" title="Transcript">
+            <svg viewBox="0 0 24 20" width="22" height="16">
+              <rect x="1" y="1" width="22" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <rect x="4" y="5" width="5" height="10" rx="1" fill="currentColor" opacity=".7"/>
+            </svg>
+          </button>
+          <button class="pane-toggle-btn active" id="pane-toggle-summary"
+                  onclick="togglePane(1)" title="Summary">
+            <svg viewBox="0 0 24 20" width="22" height="16">
+              <rect x="1" y="1" width="22" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <rect x="7" y="5" width="10" height="10" rx="1" fill="currentColor" opacity=".7"/>
+            </svg>
+          </button>
+          <button class="pane-toggle-btn active" id="pane-toggle-chat"
+                  onclick="togglePane(2)" title="Chat">
+            <svg viewBox="0 0 24 20" width="22" height="16">
+              <rect x="1" y="1" width="22" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <rect x="15" y="5" width="5" height="10" rx="1" fill="currentColor" opacity=".7"/>
+            </svg>
+          </button>
+          <button class="pane-toggle-btn" id="pane-toggle-notes"
+                  onclick="togglePane(3)" title="Notes">
+            <svg viewBox="0 0 24 20" width="22" height="16">
+              <rect x="1" y="1" width="22" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <line x1="5" y1="6"  x2="14" y2="6"  stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".85"/>
+              <line x1="5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".7"/>
+              <line x1="5" y1="14" x2="11" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace">
+
+      <!-- ── Transcript ──────────────────────────────────────────────── -->
+      <div class="col col-transcript">
+        <div class="col-header">
+          <div class="col-actions left">
+            <span class="col-title">Transcript</span>
+            <button class="icon-btn" id="speakers-btn" title="Manage speakers" onclick="openSpeakerManager()">Speakers</button>
+            <button class="icon-btn active" id="auto-scroll-btn" title="Auto-scroll to latest" onclick="toggleAutoScroll()">Auto</button>
+          </div>
+          <div class="col-actions right">
+            <button class="icon-btn fp-bell-btn hidden" id="fp-bell-btn" title="Speaker suggestions" onclick="toggleFpNotifPanel()">
+              <i class="fa-solid fa-bell"></i>
+              <span class="fp-bell-badge" id="fp-bell-badge">0</span>
+            </button>
+            <button class="icon-btn" id="transcript-filter-btn" title="Filter transcript" onclick="openTranscriptFilter(this)"><i class="fa-solid fa-filter"></i></button>
+            <button class="icon-btn" id="analytics-btn" title="Session analytics" onclick="toggleAnalyticsPanel()"><i class="fa-duotone fa-chart-pie"></i></button>
+            <hr style="height: -webkit-fill-available; border: 1px solid #ffffff1c; height: 13px; margin-inline: 3px;">
+            <button class="icon-btn" id="btn-copy-transcript" title="Copy transcript" onclick="copyTranscript()"><i class="fa-duotone fa-copy"></i></button>
+            <button class="icon-btn" title="Clear transcript" onclick="clearTranscript()"><i class="fa-duotone fa-eraser"></i></button>
+            <button class="icon-btn" id="btn-reanalyze" title="Reanalyze session" onclick="reanalyzeCurrentSession()"><i class="fa-solid fa-rotate-right"></i></button>
+          </div>
+        </div>
+
+        <!-- ── Speaker Notification Panel ────────────────────────────────── -->
+        <div id="fp-notif-panel" class="fp-notif-panel collapsed">
+          <div class="fp-notif-header">
+            <span class="fp-notif-title">Speaker Suggestions</span>
+            <button class="fp-notif-dismiss-all" id="fp-notif-dismiss-all" onclick="fpNotifDismissAll()" title="Dismiss all">
+              Clear all
+            </button>
+          </div>
+          <div class="fp-notif-list" id="fp-notif-list">
+            <!-- Populated dynamically by JS -->
+          </div>
+          <div class="fp-notif-empty" id="fp-notif-empty">
+            <i class="fa-solid fa-check-circle"></i>
+            <span>No pending suggestions</span>
+          </div>
+        </div>
+
+        <!-- ── Analytics Panel ──────────────────────────────────────────── -->
+        <div id="analytics-panel" class="analytics-panel collapsed">
+          <div class="analytics-kpi-row" id="analytics-kpis"></div>
+          <div class="analytics-section">
+            <div class="analytics-section-title">Timeline</div>
+            <div class="analytics-timeline" id="analytics-timeline"></div>
+          </div>
+          <div class="analytics-section">
+            <div class="analytics-section-title">Speaking Time</div>
+            <div class="analytics-bars" id="analytics-time-bars"></div>
+          </div>
+          <div class="analytics-section">
+            <div class="analytics-section-title">Segment Count</div>
+            <div class="analytics-bars" id="analytics-seg-bars"></div>
+          </div>
+        </div>
+
+        <!-- ── Transcript Navigator Panel ─────────────────────────────── -->
+        <div id="transcript-navigator" class="transcript-navigator collapsed">
+
+          <!-- Search with match navigation -->
+          <div class="tn-row tn-search-row">
+            <i class="fa-solid fa-magnifying-glass tn-search-icon"></i>
+            <input type="text" id="tn-search-input" class="tn-search-input" placeholder="Search transcript…" />
+            <span id="tn-match-count" class="tn-match-count"></span>
+            <button class="icon-btn tn-nav-btn" id="tn-prev-match" title="Previous match" onclick="tnPrevMatch()"><i class="fa-solid fa-chevron-up"></i></button>
+            <button class="icon-btn tn-nav-btn" id="tn-next-match" title="Next match" onclick="tnNextMatch()"><i class="fa-solid fa-chevron-down"></i></button>
+          </div>
+
+          <!-- Speaker filter pills -->
+          <div class="tn-row tn-speakers-row">
+            <button class="tn-pill tn-pill-meta" id="tn-pill-all" onclick="tnToggleAllSpeakers(true)" title="Show all speakers">All</button>
+            <button class="tn-pill tn-pill-meta" id="tn-pill-none" onclick="tnToggleAllSpeakers(false)" title="Hide all speakers">None</button>
+            <div id="tn-speaker-pills" class="tn-speaker-pills"></div>
+            <button class="tn-pill tn-pill-meta tn-pill-toggle" id="tn-pill-keys-toggle" onclick="tnToggleKeyLabels()" title="Toggle between display names and original speaker keys"><i class="fa-solid fa-tags"></i></button>
+          </div>
+
+          <!-- Tools row: reassign + time range -->
+          <!-- --
+          <div class="tn-row tn-tools-row">
+            <div class="tn-reassign-group">
+              <div class="reassign-left">
+                <span class="tn-tool-label">Replace</span>
+                <select id="tn-reassign-from" class="tn-select"><option value="" disabled selected>from…</option></select>
+                <i class="fa-solid fa-arrow-right tn-arrow"></i>
+                <select id="tn-reassign-to" class="tn-select"><option value="" disabled selected>to…</option></select>
+              </div>
+              <div class="reassign-right">
+                <label class="tn-checkbox-label"><input type="checkbox" id="tn-reassign-visible-only" checked /> visible only</label>
+                <button class="tn-apply-btn" onclick="tnApplyReassign()"><i class="fa-solid fa-check"></i> Apply</button>
+              </div>
+              </div>
+          </div>
+          -->
+          <div class="tn-row tn-time-row">
+            <i class="fa-solid fa-clock tn-time-icon"></i>
+            <span id="tn-time-label-start" class="tn-time-label">0:00</span>
+            <div class="tn-range-track" id="tn-range-track">
+              <div class="tn-range-fill" id="tn-range-fill"></div>
+              <input type="range" class="tn-range-handle tn-range-min" id="tn-range-min" min="0" max="100" value="0" step="0.5" />
+              <input type="range" class="tn-range-handle tn-range-max" id="tn-range-max" min="0" max="100" value="100" step="0.5" />
+            </div>
+            <span id="tn-time-label-end" class="tn-time-label">0:00</span>
+          </div>
+
+          <!-- Footer -->
+          <!--
+          <div class="tn-row tn-footer-row">
+            <button class="tn-clear-btn" onclick="tnClearAll()"><i class="fa-solid fa-xmark"></i> Clear all filters</button>
+            </div>-->
+        </div>
+
+        <div id="video-viewer" class="video-viewer hidden" data-video-mode="compact">
+          <div class="video-viewport" id="video-viewport">
+            <video id="playback-video" class="playback-video" muted playsinline></video>
+            <div class="video-zoom-hint hidden" id="video-zoom-hint">100%</div>
+            <div class="video-toolbar" id="video-toolbar">
+              <button class="video-tool-btn" id="video-btn-zoom-reset"
+                      onclick="resetVideoZoom()" title="Reset zoom (double-click)"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+              <span class="video-tool-sep"></span>
+              <button class="video-tool-btn active" id="video-btn-compact"
+                      onclick="setVideoMode('compact')" title="Compact"><i class="fa-solid fa-window-minimize"></i></button>
+              <button class="video-tool-btn" id="video-btn-fill"
+                      onclick="setVideoMode('fill')" title="Fill panel"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+              <button class="video-tool-btn" id="video-btn-fullscreen"
+                      onclick="setVideoMode('fullscreen')" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+            </div>
+          </div>
+        </div>
+        <div id="screen-preview" class="screen-preview hidden">
+          <div class="screen-preview-header">
+            <span class="screen-preview-label"><i class="fa-solid fa-circle screen-preview-dot"></i> Live Preview</span>
+            <button class="icon-btn screen-preview-close" onclick="toggleScreenPreview()" title="Close preview"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <img id="screen-preview-img" class="screen-preview-img" alt="Screen preview">
+        </div>
+        <div id="playback-bar" class="playback-bar hidden">
+          <button class="icon-btn playback-play-btn" id="playback-play" onclick="togglePlayback()" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
+          <span class="playback-time" id="playback-time">0:00</span>
+          <input type="range" class="playback-seek" id="playback-seek" min="0" max="100" step="0.1" value="0"
+                 oninput="seekPlayback(this.value)" />
+          <span class="playback-time" id="playback-duration">0:00</span>
+          <select class="playback-speed" id="playback-speed" onchange="setPlaybackSpeed(this.value)" title="Playback speed">
+            <option value="0.5">0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select>
+          <button class="icon-btn playback-video-btn hidden" id="playback-video-toggle"
+                  onclick="toggleVideoViewer()" title="Toggle screen recording"><i class="fa-solid fa-display"></i></button>
+          <button class="icon-btn playback-edit-btn" id="playback-edit-btn"
+                  onclick="openSessionEditor()" title="Trim / split session"><i class="fa-regular fa-scissors"></i></button>
+        </div>
+
+        <div id="transcript-selection-bar" class="transcript-selection-bar hidden">
+          <span class="tsb-count" id="tsb-count">0 segments selected</span>
+          <div class="tsb-input-wrap" id="tsb-input-wrap">
+            <input id="tsb-input" class="tsb-input" type="text" placeholder="Reassign to…" autocomplete="off" />
+            <div class="tsb-autocomplete hidden" id="tsb-autocomplete"></div>
+          </div>
+          <button class="tsb-btn tsb-apply" onclick="applyTranscriptBulkReassign()">Apply</button>
+          <button class="tsb-btn tsb-clear" onclick="clearTranscriptSelection()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="transcript-body-wrap">
+          <div class="transcript-minimap hidden" id="transcript-minimap">
+            <canvas id="minimap-canvas"></canvas>
+            <div class="minimap-viewport" id="minimap-viewport"></div>
+          </div>
+          <div id="transcript" class="col-body transcript-body">
+            <p class="empty-hint">Transcript will appear here once recording starts.</p>
+          </div>
+        </div>
+        <button class="transcript-minimap-fab hidden" id="transcript-minimap-toggle"
+                onclick="toggleTranscriptMinimap()" title="Speaker minimap">
+          <i class="fa-solid fa-objects-column"></i>
+        </button>
+        <button class="transcript-collapse-fab hidden" id="transcript-collapse-toggle"
+                onclick="toggleTranscriptCollapse()" title="Collapse consecutive speaker segments">
+          <i class="fa-solid fa-layer-group"></i>
+        </button>
+        <button class="screen-preview-fab hidden" id="screen-preview-toggle"
+                onclick="toggleScreenPreview()" title="Live screen preview"><i class="fa-solid fa-display"></i></button>
+      </div>
+
+      <div class="col-resize-handle" data-left="0" data-right="1"></div>
+
+      <!-- ── Summary ────────────────────────────────────────────────── -->
+      <div class="col col-summary">
+        <div class="col-header">
+          <div class="col-actions left">
+            <span class="col-title">Summary</span>
+            <button class="icon-btn active" id="auto-summary-btn"
+                    title="Toggle auto-summary" onclick="toggleAutoSummary()">Auto</button>
+            <span class="badge hidden" id="summary-badge">updating…</span>
+          </div>
+          <div class="col-actions right">
+            <div class="model-picker-wrap">
+              <button class="icon-btn model-picker-btn" id="summary-model-btn"
+                      title="Summary model" onclick="toggleModelPicker('summary')">
+                <i class="fa-solid fa-microchip"></i>
+                <span class="model-picker-label" id="summary-model-picker-label"></span>
+              </button>
+              <div class="model-picker-panel hidden" id="summary-model-picker"></div>
+            </div>
+            <button class="icon-btn" id="summary-prompt-toggle"
+                    title="Custom summary instructions" onclick="toggleSummaryPrompt()"><i class="fa-solid fa-gear"></i></button>
+            <button class="icon-btn" title="Copy summary" onclick="copySummary()"><i class="fa-duotone fa-copy"></i></button>
+            <button class="icon-btn" title="Refresh summary" onclick="triggerSummary()"><i class="fa-solid fa-rotate-right"></i></button>
+          </div>
+        </div>
+        <div id="summary-prompt-area" class="summary-prompt-area hidden">
+          <div class="sp-tabs" role="tablist">
+            <button type="button" class="sp-tab active" data-sp-tab="instructions"
+                    onclick="_spSwitchTab('instructions')" role="tab" aria-selected="true">
+              <i class="fa-regular fa-pen-to-square"></i> Custom Instructions
+            </button>
+            <button type="button" class="sp-tab" data-sp-tab="system"
+                    onclick="_spSwitchTab('system')" role="tab" aria-selected="false">
+              <i class="fa-solid fa-sliders"></i> System Prompt
+            </button>
+          </div>
+
+          <!-- Custom Instructions tab -->
+          <div class="sp-pane" id="sp-pane-instructions" data-sp-pane="instructions">
+            <div class="sp-pane-header">
+              <span class="sp-pane-title">Custom Instructions for this session</span>
+              <span class="sp-pane-hint">Appended to the system prompt to shape the summary's focus, tone, or structure.</span>
+            </div>
+            <textarea
+              id="summary-custom-prompt"
+              class="summary-prompt-input"
+              placeholder="e.g. This is a podcast interview. Summarize the guest's key insights and talking points instead of action items."
+              rows="4"
+              oninput="saveSummaryPrompt()"
+            ></textarea>
+            <div class="sp-pane-footer">
+              <label class="sp-default-toggle" title="Save these instructions as the default for any new session you start">
+                <input type="checkbox" id="summary-instr-default-toggle" onchange="_onSummaryInstrDefaultToggle(this.checked)">
+                <span>Use as default for new sessions</span>
+              </label>
+              <span class="sp-pane-status" id="summary-instr-status"></span>
+            </div>
+          </div>
+
+          <!-- System Prompt tab -->
+          <div class="sp-pane hidden" id="sp-pane-system" data-sp-pane="system">
+            <div class="sp-pane-header">
+              <span class="sp-pane-title">Summary System Prompt for this session</span>
+              <span class="sp-pane-hint">Overrides the default rules the summarizer follows. Leave empty to use the default. Manage the default in <strong>Settings → System Prompts</strong>.</span>
+            </div>
+            <div class="sp-source-bar">
+              <span class="sp-source-label">Currently using:</span>
+              <span class="sp-source-chip" id="summary-prompt-source-chip">Default</span>
+            </div>
+            <textarea
+              id="summary-system-prompt"
+              class="summary-prompt-input summary-prompt-input-lg"
+              placeholder="Leave empty to fall back to the default."
+              rows="8"
+              spellcheck="false"
+            ></textarea>
+            <div class="sp-pane-footer sp-pane-footer-actions">
+              <div class="sp-pane-footer-left">
+                <button type="button" class="sp-ghost-btn" id="summary-prompt-load-default-btn" onclick="loadDefaultIntoSessionSummary()" title="Replace textarea with the current default"><i class="fa-regular fa-file-lines"></i> Load default</button>
+                <button type="button" class="sp-ghost-btn sp-ghost-danger" onclick="clearSessionSummaryPrompt()" title="Remove the override; use the default"><i class="fa-solid fa-eraser"></i> Clear override</button>
+              </div>
+              <button type="button" class="sp-primary-btn" onclick="saveSessionSummaryPrompt()">Save</button>
+            </div>
+          </div>
+        </div>
+        <div id="summary" class="col-body markdown-body">
+          <p class="empty-hint">An auto-updating summary will appear here as the meeting progresses.</p>
+        </div>
+      </div>
+
+      <div class="col-resize-handle" data-left="1" data-right="2"></div>
+
+      <!-- ── Chat ───────────────────────────────────────────────────── -->
+      <div class="col col-chat">
+
+        <!-- Full-pane drag-and-drop overlay -->
+        <div id="chat-drop-overlay" class="chat-drop-overlay" aria-hidden="true">
+          <div class="chat-drop-content">
+            <div class="chat-drop-rings">
+              <div class="chat-drop-ring"></div>
+              <div class="chat-drop-ring"></div>
+            </div>
+            <div class="chat-drop-icon-wrap">
+              <i class="fa-solid fa-cloud-arrow-up chat-drop-icon"></i>
+            </div>
+            <p class="chat-drop-title">Drop to attach</p>
+            <p class="chat-drop-hint" id="chat-drop-hint">Images · PDFs · text files</p>
+          </div>
+        </div>
+
+        <div class="col-header">
+          <div class="col-title-wrap">
+            <span class="col-title">Chat</span>
+            <span class="col-subtitle" id="chat-model-label"></span>
+          </div>
+          <div class="col-actions">
+            <button class="icon-btn chat-prompt-btn" id="chat-prompt-btn"
+                    title="Session system prompt"
+                    onclick="openChatPromptDialog()"><i class="fa-solid fa-sliders"></i></button>
+            <button class="icon-btn" title="Clear chat" onclick="clearChat()"><i class="fa-duotone fa-eraser"></i></button>
+          </div>
+        </div>
+        <div id="chat-messages" class="col-body chat-body">
+          <p class="empty-hint">Ask questions about the meeting here.</p>
+        </div>
+        <div class="chat-input-area">
+          <div id="chat-attach-preview" class="chat-attach-preview hidden"></div>
+          <div class="chat-input-wrap">
+            <button class="chat-attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
+              <i class="fa-solid fa-paperclip"></i>
+            </button>
+            <div class="model-picker-wrap model-picker-chat-wrap">
+              <button class="chat-model-picker-btn" id="chat-model-btn"
+                      title="Chat model" onclick="toggleModelPicker('chat')">
+                <i class="fa-solid fa-microchip"></i>
+              </button>
+              <div class="model-picker-panel model-picker-panel-up hidden" id="chat-model-picker"></div>
+            </div>
+            <input type="file" id="chat-file-input" multiple accept="image/*,.pdf,.txt,.csv,.md,.json" style="display:none"
+                   onchange="_handleFileSelect(this.files); this.value='';">
+            <textarea
+              id="chat-input"
+              placeholder="Ask about the meeting…"
+              rows="1"
+              onkeydown="handleChatKey(event)"
+              oninput="_autogrowChatInput()"
+              title="Press Enter to send, Shift+Enter for newline"
+            ></textarea>
+            <button id="send-btn" class="chat-send-btn" onclick="sendMessage()" title="Send message">
+              <i class="fa-solid fa-arrow-up"></i>
+            </button>
+            <button id="stop-btn" class="chat-stop-btn hidden" onclick="stopChatGeneration()" title="Stop generating">
+              <i class="fa-solid fa-stop"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-resize-handle" data-left="2" data-right="3"></div>
+
+      <!-- ── Notes ────────────────────────────────────────────────────── -->
+      <div class="col col-notes" style="display:none">
+
+        <!-- Full-pane drag-and-drop overlay -->
+        <div id="notes-drop-overlay" class="notes-drop-overlay" aria-hidden="true">
+          <div class="notes-drop-content">
+            <i class="fa-solid fa-paperclip notes-drop-icon"></i>
+            <p class="notes-drop-title">Drop to attach</p>
+          </div>
+        </div>
+
+        <div class="col-header">
+          <div class="col-actions left">
+            <span class="col-title">Notes</span>
+            <span class="badge notes-badge hidden" id="notes-status-badge">saving…</span>
+          </div>
+          <div class="col-actions right">
+            <button class="icon-btn" id="notes-copy-btn"
+                    title="Copy notes as plain text" onclick="copyNotesPlainText()"><i class="fa-duotone fa-copy"></i></button>
+            <button class="icon-btn" id="notes-export-btn"
+                    title="Download notes as HTML" onclick="downloadNotesHtml()"><i class="fa-solid fa-file-arrow-down"></i></button>
+            <button class="icon-btn" id="notes-attach-btn"
+                    title="Attach file or image" onclick="document.getElementById('notes-file-input').click()"><i class="fa-solid fa-paperclip"></i></button>
+            <button class="icon-btn" title="Clear notes" onclick="clearNotes()"><i class="fa-duotone fa-eraser"></i></button>
+            <input type="file" id="notes-file-input" multiple
+                   accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.json,.html,.htm,.xml,.zip,.rtf,.odt,.ods,.odp,.py,.js,.ts,.tsx,.jsx,.go,.rs,.java,.cpp,.c,.h,.cs,.rb,.php,.swift,.kt,.sh,.yml,.yaml,.toml,.ini"
+                   style="display:none"
+                   onchange="_notesHandleFileSelect(this.files); this.value='';">
+          </div>
+        </div>
+
+        <div class="notes-toolbar-wrap">
+          <div id="notes-toolbar" class="notes-toolbar">
+            <span class="ql-formats">
+              <select class="ql-header">
+                <option value="1"></option>
+                <option value="2"></option>
+                <option value="3"></option>
+                <option value="4"></option>
+                <option selected></option>
+              </select>
+            </span>
+            <span class="ql-formats">
+              <button class="ql-bold" title="Bold (Ctrl+B)"></button>
+              <button class="ql-italic" title="Italic (Ctrl+I)"></button>
+              <button class="ql-underline" title="Underline (Ctrl+U)"></button>
+              <button class="ql-strike" title="Strikethrough"></button>
+            </span>
+            <span class="ql-formats">
+              <select class="ql-color" title="Text color">
+                <option selected></option>
+                <option value="#e6edf3"></option>
+                <option value="#8b949e"></option>
+                <option value="#f05541"></option>
+                <option value="#ff9f4e"></option>
+                <option value="#e3b341"></option>
+                <option value="#3fb950"></option>
+                <option value="#39c5cf"></option>
+                <option value="#58a6ff"></option>
+                <option value="#bc8cff"></option>
+                <option value="#f778ba"></option>
+              </select>
+              <select class="ql-background" title="Background color">
+                <option selected></option>
+                <option value="#e6edf3"></option>
+                <option value="#f05541"></option>
+                <option value="#ff9f4e"></option>
+                <option value="#e3b341"></option>
+                <option value="#3fb950"></option>
+                <option value="#39c5cf"></option>
+                <option value="#58a6ff"></option>
+                <option value="#bc8cff"></option>
+                <option value="#f778ba"></option>
+                <option value="#1f2630"></option>
+              </select>
+            </span>
+            <!-- Expanded alignment row: shown when toolbar has room, collapsed
+                 to a single picker (notes-align-collapsed) when narrow. Both
+                 are wired by Quill independently and toggle the same format. -->
+            <span class="ql-formats notes-align-expanded">
+              <button class="ql-align" value="" title="Align left"></button>
+              <button class="ql-align" value="center" title="Align center"></button>
+              <button class="ql-align" value="right" title="Align right"></button>
+              <button class="ql-align" value="justify" title="Justify"></button>
+            </span>
+            <span class="ql-formats notes-align-collapsed">
+              <select class="ql-align" title="Align">
+                <option selected></option>
+                <option value="center"></option>
+                <option value="right"></option>
+                <option value="justify"></option>
+              </select>
+            </span>
+            <span class="ql-formats">
+              <button class="ql-list" value="ordered" title="Numbered list"></button>
+              <button class="ql-list" value="bullet" title="Bullet list"></button>
+              <button class="ql-list" value="check" title="Checklist"></button>
+              <button class="ql-indent" value="-1" title="Outdent"></button>
+              <button class="ql-indent" value="+1" title="Indent"></button>
+            </span>
+            <span class="ql-formats">
+              <button class="ql-blockquote" title="Quote"></button>
+              <button class="ql-code-block" title="Code block"></button>
+              <button class="ql-link" title="Link"></button>
+            </span>
+            <span class="ql-formats">
+              <button class="ql-clean" title="Clear formatting"></button>
+            </span>
+          </div>
+        </div>
+
+        <div class="notes-body-wrap">
+          <div id="notes-editor" class="notes-editor"></div>
+          <div class="notes-empty-hint" id="notes-empty-hint">
+            <div class="notes-empty-stack">
+              <i class="fa-regular fa-pen-to-square notes-empty-icon"></i>
+              <p class="notes-empty-title">Take notes alongside the meeting</p>
+              <p class="notes-empty-sub">Type, paste images, or drop files anywhere in this pane.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- .workspace -->
+  </div><!-- .main-area -->
+</div><!-- .app-layout -->
+
+<audio id="playback-audio" preload="auto"></audio>
+
+<!-- ── Speaker cleanup floating video popup ────────────────────────────────
+     Independent draggable mini-player. Lives at body level so it floats
+     above the speaker manager modal and isn't clipped by overflow. -->
+<div class="cleanup-video-popup" id="cleanup-video-popup" hidden>
+  <div class="cleanup-video-header" id="cleanup-video-header" title="Drag to move">
+    <i class="fa-solid fa-grip-vertical cleanup-video-grip"></i>
+    <span class="cleanup-video-title">Recording</span>
+    <span class="cleanup-video-time" id="cleanup-video-time">--:--</span>
+    <button class="cleanup-video-close" onclick="closeCleanupVideoPopup()" title="Close">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+  <div class="cleanup-video-body">
+    <video id="cleanup-video" playsinline preload="metadata" muted></video>
+    <div class="cleanup-video-noseek" id="cleanup-video-noseek" hidden>
+      <i class="fa-solid fa-video-slash"></i>
+      <span>Segment falls outside recorded video</span>
+    </div>
+  </div>
+  <div class="cleanup-video-resize" id="cleanup-video-resize" title="Drag to resize"></div>
+</div>
+
+<div class="overlay hidden" id="speaker-manager-overlay" onclick="closeSpeakerManagerOnOverlay(event)">
+  <div class="dialog speaker-manager-dialog">
+    <div class="speaker-manager-header">
+      <h3 class="speaker-manager-title">Speakers</h3>
+      <p class="speaker-manager-subtitle" id="speaker-manager-subtitle">Manage speaker names, colors, and bulk assignments.</p>
+      <button class="icon-btn speaker-manager-close" onclick="closeSpeakerManager()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="speaker-manager-tabs" id="speaker-manager-tabs">
+      <button type="button" class="speaker-manager-tab active" data-tab="manage" onclick="switchSpeakerManagerTab('manage')">
+        <i class="fa-regular fa-rectangle-list"></i> Manage
+      </button>
+      <button type="button" class="speaker-manager-tab" data-tab="cleanup" onclick="switchSpeakerManagerTab('cleanup')">
+        <i class="fa-solid fa-broom"></i> Cleanup
+        <span class="speaker-manager-tab-badge" id="speaker-cleanup-badge" hidden></span>
+      </button>
+    </div>
+
+    <span class="speaker-editor-hint" id="speaker-editor-hint">Click · Ctrl multi · Shift range</span>
+    <div class="speaker-manager-body" data-tab-view="manage">
+      <div class="speaker-color-grid" id="speaker-color-grid"></div>
+      <div class="speaker-manager-list" id="speaker-manager-list"></div>
+      <div class="speaker-editor">
+        <div class="speaker-editor-row">
+          <input id="speaker-editor-name" class="speaker-editor-input" list="speaker-name-options"
+                 placeholder="Speaker name" />
+          <datalist id="speaker-name-options"></datalist>
+        </div>
+        <div class="speaker-editor-actions">
+          <div class="left-actions">
+            <button class="speaker-manager-btn speaker-manager-btn-primary" id="speaker-save-btn" onclick="applySpeakerEditor()">Save</button>
+            <button class="speaker-manager-btn speaker-manager-btn-secondary" id="speaker-add-btn" onclick="createSpeakerProfile()"><i class="fa-solid fa-plus"></i> Add</button>
+            <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="clearSpeakerSelection()">Clear</button>
+          </div>
+          <button class="speaker-manager-btn speaker-manager-btn-ghost fp-lib-btn" onclick="openFingerprintPanel()" title="Manage cross-session voice profiles"><i class="fa-solid fa-waveform-lines"></i> Voice Library</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Cleanup view (drag-drop cluster rectification) ─────────────────── -->
+    <div class="speaker-cleanup-body" data-tab-view="cleanup" hidden>
+      <div class="cleanup-toolbar">
+        <div class="cleanup-stats" id="cleanup-stats">Loading clusters…</div>
+        <div class="cleanup-actions">
+          <button type="button" class="speaker-manager-btn speaker-manager-btn-ghost" id="cleanup-video-toggle" onclick="toggleCleanupVideoPopup()" title="Show recording preview">
+            <i class="fa-solid fa-video"></i>
+          </button>
+          <button type="button" class="speaker-manager-btn speaker-manager-btn-ghost" id="cleanup-reload-btn" onclick="reloadSpeakerClusters()" title="Reload from disk">
+            <i class="fa-solid fa-arrows-rotate"></i>
+          </button>
+          <button type="button" class="speaker-manager-btn speaker-manager-btn-ghost" id="cleanup-confident-btn" onclick="applyConfidentCleanupMatches()" disabled>
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Apply confident
+          </button>
+          <button type="button" class="speaker-manager-btn speaker-manager-btn-ghost" id="cleanup-reset-btn" onclick="resetSpeakerCleanup()" disabled>
+            Reset
+          </button>
+          <button type="button" class="speaker-manager-btn speaker-manager-btn-primary" id="cleanup-apply-btn" onclick="applySpeakerCleanup()" disabled>
+            <i class="fa-solid fa-check"></i> Apply changes
+          </button>
+        </div>
+      </div>
+
+      <div class="cleanup-loading" id="cleanup-loading" hidden>
+        <div class="cleanup-spinner"></div>
+        <div class="cleanup-loading-text" id="cleanup-loading-text">Analyzing speakers…</div>
+      </div>
+
+      <div class="cleanup-grid" id="cleanup-grid"></div>
+
+      <div class="cleanup-noise-section" id="cleanup-noise-section" hidden>
+        <button type="button" class="cleanup-noise-toggle" onclick="toggleCleanupNoiseExpanded()">
+          <i class="fa-solid fa-volume-xmark"></i>
+          <span id="cleanup-noise-count">0</span> marked as noise
+          <i class="fa-solid fa-chevron-down cleanup-noise-chevron" id="cleanup-noise-chevron"></i>
+        </button>
+        <div class="cleanup-noise-members" id="cleanup-noise-members" hidden></div>
+      </div>
+
+      <div class="cleanup-help">
+        <i class="fa-regular fa-circle-info"></i>
+        Drag speakers between cards to fix mislabeled segments. Drop on <em>+ New cluster</em> to split off. Click a speaker to preview audio.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fingerprint match toast ─────────────────────────────────────────── -->
+<div class="fp-match-toast hidden" id="fp-match-toast">
+  <div class="fp-toast-body">
+    <span class="fp-toast-label" id="fp-toast-label">Speaker 1 sounds like <strong id="fp-toast-name"></strong></span>
+    <span class="fp-toast-sim" id="fp-toast-sim"></span>
+  </div>
+  <div class="fp-toast-actions">
+    <button class="fp-toast-btn fp-toast-apply" id="fp-toast-apply" onclick="fpToastApply()">Apply</button>
+    <div class="fp-toast-more-wrap">
+      <button class="fp-toast-btn fp-toast-other" id="fp-toast-other" onclick="fpToastToggleOther()">Not this</button>
+      <div class="fp-toast-other-list hidden" id="fp-toast-other-list"></div>
+    </div>
+    <button class="fp-toast-btn fp-toast-skip" onclick="fpToastSkip()">Skip</button>
+  </div>
+</div>
+
+<!-- ── Voice Library panel ─────────────────────────────────────────────── -->
+<div class="overlay hidden" id="fingerprint-panel-overlay" onclick="closeFingerprintPanelOnOverlay(event)">
+  <div class="dialog fingerprint-panel-dialog">
+    <div class="fingerprint-panel-header">
+      <h3>Voice Library</h3>
+      <p class="fingerprint-panel-subtitle">Cross-session speaker identity profiles</p>
+      <button class="icon-btn fingerprint-panel-close" onclick="closeFingerprintPanel()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="fp-tab-bar">
+      <button class="fp-tab active" data-tab="profiles" onclick="fpSwitchTab('profiles')">Profiles</button>
+      <button class="fp-tab" data-tab="match" onclick="fpSwitchTab('match')">Match Speakers</button>
+    </div>
+    <div class="fingerprint-panel-body">
+      <div class="fp-tab-content" id="fp-tab-profiles">
+        <div class="fingerprint-panel-list" id="fingerprint-profile-list">
+          <div class="fp-list-toolbar">
+            <input type="text" class="fp-search-input" id="fp-search-input" placeholder="Search profiles..." oninput="_fpFilterList()" />
+            <button type="button" class="icon-btn fp-select-toggle" id="fp-select-toggle" title="Select multiple" onclick="_fpToggleSelectMode()"><i class="fa-solid fa-check-double"></i></button>
+          </div>
+          <div class="fp-select-bar hidden" id="fp-select-bar">
+            <label class="fp-select-all-label"><input type="checkbox" id="fp-select-all" onchange="_fpToggleSelectAll(this.checked)" /> All</label>
+            <span class="fp-select-count" id="fp-select-count">0 selected</span>
+          </div>
+          <div class="fp-profile-scroll" id="fp-profile-scroll">
+            <div class="fp-panel-empty">No voice profiles yet.</div>
+          </div>
+          <div class="fp-bulk-actions hidden" id="fp-bulk-actions">
+            <button class="speaker-manager-btn speaker-manager-btn-secondary fp-bulk-btn" onclick="_fpBulkOptimize()" title="Optimize selected"><i class="fa-duotone fa-wand-magic-sparkles"></i> Optimize</button>
+            <button class="speaker-manager-btn speaker-manager-btn-secondary fp-bulk-btn" onclick="_fpBulkMerge()" title="Merge selected into one"><i class="fa-solid fa-merge"></i> Merge</button>
+            <button class="speaker-manager-btn fp-detail-delete-btn fp-bulk-btn" onclick="_fpBulkDelete()" title="Delete selected"><i class="fa-solid fa-trash"></i> Delete</button>
+          </div>
+        </div>
+        <div class="fingerprint-panel-detail hidden" id="fingerprint-profile-detail">
+          <div class="fp-panel-top">
+              <div class="fp-detail-name-row">
+              <input class="fp-detail-name-input" id="fp-detail-name" placeholder="Name" />
+              <div class="speaker-color-grid fp-detail-color-grid" id="fp-detail-color-grid"></div>
+              </div>
+              <div class="fp-detail-meta" id="fp-detail-meta"></div>
+              <div class="fp-detail-sessions" id="fp-detail-sessions"></div>
+          </div>
+          <div class="fp-panel-bottom">
+              <div class="fp-detail-actions">
+                  <div class="actions-left">
+                      <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpDetailSave()">Save</button>
+                      <button class="speaker-manager-btn speaker-manager-btn-secondary" onclick="fpDetailOptimize()">Optimize</button>
+                  </div>
+              <div class="fp-detail-merge-wrap">
+                  <select id="fp-detail-merge-sel" class="fp-detail-merge-sel">
+                  <option value="">Merge into…</option>
+                  </select>
+                  <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpDetailMerge()">Merge</button>
+              </div>
+              <button class="speaker-manager-btn fp-detail-delete-btn" onclick="fpDetailDelete()">Delete</button>
+          </div>
+          </div>
+
+        </div>
+        <div class="fingerprint-panel-new" id="fingerprint-panel-new" style="display:none">
+          <input class="fp-detail-name-input" id="fp-new-name" placeholder="New profile name" />
+          <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpCreateProfile()">Create</button>
+          <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpCancelNew()">Cancel</button>
+        </div>
+      </div>
+      <div class="fp-tab-content hidden" id="fp-tab-match">
+        <div class="fp-match-empty hidden" id="fp-match-empty">No unlinked speakers found across your meetings.</div>
+        <div class="fp-match-scroll" id="fp-match-scroll"></div>
+        <div class="fp-match-actions hidden" id="fp-match-actions">
+          <button class="speaker-manager-btn speaker-manager-btn-primary" onclick="fpBulkLinkAll()">Apply All</button>
+        </div>
+      </div>
+    </div>
+    <div class="fingerprint-panel-footer" id="fp-footer-profiles">
+      <button class="speaker-manager-btn speaker-manager-btn-ghost" onclick="fpShowNew()"><i class="fa-solid fa-plus"></i> New Profile</button>
+    </div>
+  </div>
+</div>
+
+{% include "_settings.html" %}
+
+<div class="overlay hidden" id="session-editor-overlay">
+  <div class="dialog session-editor-dialog">
+    <div class="session-editor-header">
+      <div>
+        <div class="session-editor-title">Trim / Split</div>
+        <div class="session-editor-subtitle" id="session-editor-subtitle"></div>
+      </div>
+      <button class="icon-btn" onclick="closeSessionEditor()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="session-editor-toolbar">
+      <div class="session-editor-mode">
+        <button class="active" id="session-editor-mode-trim" onclick="setSessionEditorMode('trim')">Trim</button>
+        <button id="session-editor-mode-split" onclick="setSessionEditorMode('split')">Split</button>
+      </div>
+      <div class="session-editor-tools">
+        <button class="session-editor-secondary" onclick="sessionEditorZoomOut()" title="Zoom out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+        <button class="session-editor-secondary" onclick="sessionEditorZoomIn()" title="Zoom in"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+        <button class="session-editor-secondary" onclick="sessionEditorFit()" title="Fit timeline"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>
+        <button class="session-editor-secondary" id="session-editor-suggestion-btn" onclick="sessionEditorUseSuggestion()" title="No quiet span detected">Use quiet suggestion</button>
+      </div>
+    </div>
+    <div class="session-editor-speakers hidden" id="session-editor-speakers">
+      <button class="session-editor-speaker-toggle" onclick="sessionEditorToggleSpeakerPanel()" title="Show or hide speaker filters">
+        <i class="fa-solid fa-chevron-down" id="session-editor-speaker-chevron"></i>
+        <span id="session-editor-speaker-summary">Speakers</span>
+      </button>
+      <div class="session-editor-speaker-actions">
+        <button class="session-editor-speaker-meta" id="session-editor-speakers-all" onclick="sessionEditorToggleAllSpeakers(true)" title="Show all speaker bars">All</button>
+        <button class="session-editor-speaker-meta" id="session-editor-speakers-none" onclick="sessionEditorToggleAllSpeakers(false)" title="Hide all speaker bars">None</button>
+      </div>
+      <div class="session-editor-speaker-pills" id="session-editor-speaker-pills"></div>
+    </div>
+    <div class="session-editor-stage">
+      <canvas id="session-editor-canvas" class="session-editor-canvas"></canvas>
+      <div class="session-editor-overview" id="session-editor-overview">
+        <div class="session-editor-overview-window" id="session-editor-overview-window"></div>
+      </div>
+      <div class="session-editor-hint" id="session-editor-hint">Loading audio profile...</div>
+    </div>
+    <div class="session-editor-fields">
+      <label>Start <input type="number" id="session-editor-start" min="0" step="0.1" onchange="sessionEditorUpdateTrimInputs()"></label>
+      <label>End <input type="number" id="session-editor-end" min="0" step="0.1" onchange="sessionEditorUpdateTrimInputs()"></label>
+      <button class="session-editor-secondary" onclick="sessionEditorAddSplitAtPlayhead()">Add Split</button>
+    </div>
+    <div class="session-editor-ranges" id="session-editor-ranges"></div>
+    <div class="session-editor-actions">
+      <button class="session-editor-secondary hidden" id="session-editor-restore" onclick="restoreSessionEditorOriginal()">Restore Original</button>
+      <button class="session-editor-secondary" onclick="closeSessionEditor()">Cancel</button>
+      <button class="session-editor-primary" id="session-editor-apply" onclick="applySessionEditor()">Apply Trim</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Export modal ────────────────────────────────────────────────────── -->
+<!-- ── Chat system prompt dialog (per-session override) ─────────────────── -->
+<div class="overlay hidden" id="chat-prompt-overlay" onclick="if(event.target===this)closeChatPromptDialog()">
+  <div class="dialog chat-prompt-dialog">
+    <div class="chat-prompt-dialog-header">
+      <div class="chat-prompt-dialog-left">
+        <div class="chat-prompt-dialog-icon"><i class="fa-solid fa-sliders"></i></div>
+        <div>
+          <div class="chat-prompt-dialog-title">Session System Prompt</div>
+          <div class="chat-prompt-dialog-subtitle" id="chat-prompt-dialog-subtitle">Overrides the global default for this session</div>
+        </div>
+      </div>
+      <button class="icon-btn" onclick="closeChatPromptDialog()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="chat-prompt-dialog-body">
+      <div class="chat-prompt-source-bar" id="chat-prompt-source-bar">
+        <span class="chat-prompt-source-label">Currently using:</span>
+        <span class="chat-prompt-source-chip" id="chat-prompt-source-chip">Built-in default</span>
+      </div>
+      <textarea id="session-chat-prompt" class="chat-prompt-textarea chat-prompt-textarea-lg"
+                rows="16" spellcheck="false"
+                placeholder="Leave empty to fall back to the global / built-in default"></textarea>
+      <div class="chat-prompt-presets">
+        <button class="chat-prompt-ghost" onclick="loadBuiltinIntoSession()" title="Replace textarea with the built-in default"><i class="fa-regular fa-file-lines"></i> Load built-in</button>
+        <button class="chat-prompt-ghost" id="chat-prompt-load-global-btn" onclick="loadGlobalIntoSession()" title="Replace textarea with the current global default"><i class="fa-solid fa-globe"></i> Load global</button>
+      </div>
+    </div>
+    <div class="chat-prompt-dialog-actions">
+      <button class="chat-prompt-secondary" onclick="clearSessionChatPrompt()" title="Remove the override; use global/built-in">Clear override</button>
+      <div class="chat-prompt-dialog-actions-right">
+        <button class="chat-prompt-secondary" onclick="closeChatPromptDialog()">Cancel</button>
+        <button class="chat-prompt-primary" onclick="saveSessionChatPrompt()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="export-overlay" onclick="if(event.target===this)closeExportModal()">
+  <div class="dialog export-dialog">
+    <div class="export-header">
+      <div class="export-header-left">
+        <div class="export-header-icon"><i class="fa-solid fa-file-export"></i></div>
+        <div>
+          <div class="export-title-text">Export Meeting</div>
+          <div class="export-subtitle" id="export-subtitle">Select data to include</div>
+        </div>
+      </div>
+      <button class="icon-btn" onclick="closeExportModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="export-body" id="export-body-options">
+      <div class="export-section">
+        <div class="export-section-label">Data</div>
+        <div class="export-options">
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-metadata" checked disabled>
+            <i class="fa-solid fa-circle-info export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Session metadata</span><span class="export-opt-desc">Title, timestamps, and session info</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-transcription" checked>
+            <i class="fa-solid fa-closed-captioning export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Transcription</span><span class="export-opt-desc">Full transcript with timing data</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-summary" checked>
+            <i class="fa-solid fa-file-lines export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Summary</span><span class="export-opt-desc">AI-generated meeting summary</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-chat" checked>
+            <i class="fa-solid fa-comments export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Chat history</span><span class="export-opt-desc">Q&A messages, screenshots, and attachments</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-notes" checked>
+            <i class="fa-solid fa-pen-to-square export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Notes</span><span class="export-opt-desc">Rich-text notes plus inline images and attached files</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-speakers" checked>
+            <i class="fa-solid fa-users export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Speaker labels</span><span class="export-opt-desc">Speaker names and color assignments</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-speaker_embeddings" checked>
+            <i class="fa-solid fa-fingerprint export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Voice fingerprints</span><span class="export-opt-desc">Voice recognition data for speaker matching</span></div>
+          </label>
+        </div>
+      </div>
+      <div class="export-section">
+        <div class="export-section-label">Media</div>
+        <div class="export-options">
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-audio">
+            <i class="fa-solid fa-waveform-lines export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Audio recording</span><span class="export-opt-desc">Compressed audio (Opus)</span></div>
+          </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-opt-video">
+            <i class="fa-solid fa-film export-opt-icon"></i>
+            <div class="export-opt-text"><span class="export-opt-name">Video recording</span><span class="export-opt-desc">Screen capture video (MP4)</span></div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="export-body export-body-progress hidden" id="export-body-progress">
+      <div class="export-steps" id="export-steps"></div>
+      <div class="export-progress-bar"><div class="export-progress-fill" id="export-progress-fill"></div></div>
+      <div class="export-progress-status" id="export-progress-status">Preparing…</div>
+    </div>
+
+    <div class="export-actions" id="export-actions">
+      <button class="btn export-btn-cancel" onclick="closeExportModal()">Cancel</button>
+      <button class="btn export-btn-go" id="export-download-btn" onclick="startExport()">
+        <i class="fa-solid fa-download"></i> Export
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Import drop zone overlay ──────────────────────────────────────── -->
+<div class="import-drop-overlay hidden" id="import-drop-overlay">
+  <div class="import-drop-content">
+    <i class="fa-solid fa-file-import import-drop-icon"></i>
+    <span class="import-drop-text">Drop meeting export to import</span>
+  </div>
+</div>
+
+<!-- ── Import progress toast ─────────────────────────────────────────── -->
+<div class="import-toast hidden" id="import-toast">
+  <div class="import-toast-inner">
+    <i class="fa-solid fa-spinner fa-spin import-toast-icon" id="import-toast-icon"></i>
+    <span id="import-toast-text">Importing meeting…</span>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

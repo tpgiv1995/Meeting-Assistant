@@ -1,0 +1,526 @@
+{# Shared Settings overlay markup for home + session pages.
+   Behavior is driven entirely by app.js; markup must stay in lockstep. #}
+<div class="overlay hidden" id="settings-overlay" onclick="closeSettingsOnOverlay(event)">
+  <div class="dialog settings-dialog">
+    <div class="settings-header">
+      <span class="settings-title-text">Settings</span>
+      <button class="icon-btn" onclick="closeSettings()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="settings-layout">
+
+      <!-- ── Sidebar nav ──────────────────────────────────────────── -->
+      <nav class="settings-nav">
+        <button class="settings-nav-item active" data-target="section-ai" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-robot"></i><span>AI Providers</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-prompts" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-message-lines"></i><span>System Prompts</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-transcription" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-waveform-lines"></i><span>Transcription</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-diarization" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-users"></i><span>Diarization</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-reanalysis" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-arrows-rotate"></i><span>Reanalysis</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-agc" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-sliders"></i><span>Auto Gain</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-echo" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-tower-broadcast"></i><span>Echo Cancellation</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-screen" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-display"></i><span>Screen Recording</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-reminders" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-bell"></i><span>Reminders</span>
+        </button>
+        <button class="settings-nav-item" data-target="section-system" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-microchip"></i><span>System</span>
+        </button>
+        {# Pinned to the bottom of the nav via margin-top:auto in CSS so any
+           future tabs slot above it without re-anchoring. #}
+        <button class="settings-nav-item settings-nav-item-pinned"
+                data-target="section-changelog" onclick="switchSettingsSection(this)">
+          <i class="fa-solid fa-clock-rotate-left"></i><span>Changelog</span>
+        </button>
+      </nav>
+
+      <!-- ── Content panels ──────────────────────────────────────── -->
+      <div class="settings-content">
+
+        <!-- AI Providers -->
+        <div class="settings-panel active" id="section-ai">
+          <p class="settings-setup-hint" id="settings-setup-hint" style="display:none">
+            Enter your API keys to get started. HuggingFace is optional but enables speaker diarization.
+          </p>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Default Provider</div>
+                <div class="settings-row-desc">AI engine for summaries and chat (per-tool overrides below)</div>
+              </div>
+              <div class="provider-toggle" id="provider-toggle">
+                <button id="provider-btn-anthropic" onclick="setAiProvider('anthropic')">Anthropic</button>
+                <button id="provider-btn-openai"    onclick="setAiProvider('openai')">OpenAI</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Model</div>
+                <div class="settings-row-desc">Latest versions are auto-detected from each provider</div>
+              </div>
+              <div class="ai-model-row">
+                <select id="ai-model-sel" onchange="setAiModel(this.value)"></select>
+                <button class="icon-btn ai-model-refresh" id="ai-model-refresh-btn"
+                        onclick="refreshAiModels()" title="Check for newly released models"><i class="fa-solid fa-rotate"></i></button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group" id="key-anthropic-field">
+            <div class="settings-key-row">
+              <div class="settings-key-header">
+                <span class="settings-row-label">Anthropic API Key</span>
+                <span class="settings-req" id="key-anthropic-req">required</span>
+                <a class="settings-key-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key →</a>
+              </div>
+              <div class="key-input-row">
+                <input type="password" id="key-anthropic" placeholder="sk-ant-..." autocomplete="off" />
+                <button class="icon-btn key-vis-btn" onclick="toggleKeyVis('key-anthropic')" title="Show/hide"><i class="fa-solid fa-eye"></i></button>
+              </div>
+              <div class="key-status" id="key-anthropic-status"></div>
+            </div>
+          </div>
+          <div class="settings-group" id="key-openai-field">
+            <div class="settings-key-row">
+              <div class="settings-key-header">
+                <span class="settings-row-label">OpenAI API Key</span>
+                <span class="settings-req" id="key-openai-req">required</span>
+                <a class="settings-key-link" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get a key →</a>
+              </div>
+              <div class="key-input-row">
+                <input type="password" id="key-openai" placeholder="sk-..." autocomplete="off" />
+                <button class="icon-btn key-vis-btn" onclick="toggleKeyVis('key-openai')" title="Show/hide"><i class="fa-solid fa-eye"></i></button>
+              </div>
+              <div class="key-status" id="key-openai-status"></div>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-key-row">
+              <div class="settings-key-header">
+                <span class="settings-row-label">HuggingFace Token</span>
+                <span class="settings-opt" id="key-huggingface-req">optional</span>
+                <a class="settings-key-link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">Get a token →</a>
+              </div>
+              <div class="key-input-row">
+                <input type="password" id="key-huggingface" placeholder="hf_..." autocomplete="off" />
+                <button class="icon-btn key-vis-btn" onclick="toggleKeyVis('key-huggingface')" title="Show/hide"><i class="fa-solid fa-eye"></i></button>
+              </div>
+              <div class="key-status" id="key-huggingface-status"></div>
+            </div>
+          </div>
+          <button class="btn-save-keys" onclick="saveApiKeys()">Save Keys</button>
+        </div>
+
+        <!-- System Prompts -->
+        <div class="settings-panel" id="section-prompts">
+          <p class="settings-row-desc" style="margin:0 0 12px;font-size:12px;color:var(--fg-muted)">
+            Default system prompts used by the AI for chat, summarization, and
+            session naming. Click each section to expand. Per-session overrides
+            take precedence when set. Click <strong>Save</strong> at the bottom
+            to apply your changes.
+          </p>
+
+          {# Each section uses native <details>/<summary> so they're keyboard
+             accessible and toggle without any JS. Default = collapsed. #}
+          <details class="prompt-section">
+            <summary class="prompt-section-summary">
+              <i class="fa-solid fa-chevron-right prompt-section-chevron"></i>
+              <span class="prompt-section-title">Chat System Prompt</span>
+              <span class="prompt-section-tag" id="global-chat-prompt-tag"></span>
+            </summary>
+            <div class="settings-group">
+              <div class="settings-key-row">
+                <div class="settings-key-header">
+                  <span class="settings-row-label">Default prompt</span>
+                  <button class="settings-key-link" onclick="resetGlobalChatPrompt()"><i class="fa-solid fa-rotate-left"></i> Reset to original</button>
+                </div>
+                <textarea id="global-chat-prompt" class="chat-prompt-textarea"
+                          rows="10" spellcheck="false"
+                          placeholder="Loading default…"></textarea>
+                <div class="settings-row-desc">Applied to every chat session unless overridden via the chat panel's <i class="fa-solid fa-sliders"></i> button. Transcript and meeting context are always appended automatically.</div>
+              </div>
+            </div>
+          </details>
+
+          <details class="prompt-section">
+            <summary class="prompt-section-summary">
+              <i class="fa-solid fa-chevron-right prompt-section-chevron"></i>
+              <span class="prompt-section-title">Summary System Prompt</span>
+              <span class="prompt-section-tag" id="global-summary-prompt-tag"></span>
+            </summary>
+            <div class="settings-group">
+              <div class="settings-key-row">
+                <div class="settings-key-header">
+                  <span class="settings-row-label">Default prompt</span>
+                  <button class="settings-key-link" onclick="resetGlobalSummaryPrompt()"><i class="fa-solid fa-rotate-left"></i> Reset to original</button>
+                </div>
+                <textarea id="global-summary-prompt" class="chat-prompt-textarea"
+                          rows="10" spellcheck="false"
+                          placeholder="Loading default…"></textarea>
+                <div class="settings-row-desc">Defines how the summarizer structures and writes summaries. Per-session overrides and custom instructions are configured inline from the Summary column's <i class="fa-solid fa-gear"></i> button.</div>
+              </div>
+            </div>
+          </details>
+
+          <details class="prompt-section">
+            <summary class="prompt-section-summary">
+              <i class="fa-solid fa-chevron-right prompt-section-chevron"></i>
+              <span class="prompt-section-title">Session Title System Prompt</span>
+              <span class="prompt-section-tag" id="global-title-prompt-tag"></span>
+            </summary>
+            <div class="settings-group">
+              <div class="settings-key-row">
+                <div class="settings-key-header">
+                  <span class="settings-row-label">Default prompt</span>
+                  <button class="settings-key-link" onclick="resetGlobalTitlePrompt()"><i class="fa-solid fa-rotate-left"></i> Reset to original</button>
+                </div>
+                <textarea id="global-title-prompt" class="chat-prompt-textarea"
+                          rows="10" spellcheck="false"
+                          placeholder="Loading default…"></textarea>
+                <div class="settings-row-desc">Used when an auto-generated title is created at the end of a recording (and for new Global Chat conversations). Participants and similar past meeting titles are always appended as context to keep recurring meetings consistent.</div>
+              </div>
+            </div>
+          </details>
+
+          <div class="prompts-save-bar">
+            <span class="prompts-save-status" id="prompts-save-status"></span>
+            <button class="btn-save-keys" id="prompts-save-btn" onclick="saveSystemPrompts()">Save</button>
+          </div>
+        </div>
+
+        <!-- Transcription -->
+        <div class="settings-panel" id="section-transcription">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Preset</div>
+                <div class="settings-row-desc" id="transcription-preset-desc">Balanced preset for most meetings</div>
+              </div>
+              <select id="transcription-preset-sel" class="model-config-sel" onchange="setTranscriptionPreset(this.value)">
+              </select>
+            </div>
+          </div>
+          <div class="settings-group" id="ap-transcription-params">
+            <!-- Populated dynamically by JS -->
+          </div>
+          <div class="ap-reset-all-wrap">
+            <button class="ap-reset-all-btn" onclick="resetSection('transcription')">
+              <i class="fa-solid fa-rotate-right"></i> Reset all to defaults
+            </button>
+          </div>
+        </div>
+
+        <!-- Diarization -->
+        <div class="settings-panel" id="section-diarization">
+          <p class="settings-row-desc" style="margin:0 0 10px;font-size:11px;color:var(--fg-muted)">
+            Pipeline parameters marked with <i class="fa-solid fa-rotate-right" style="font-size:9px"></i> require a session restart to take effect.
+          </p>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Preset</div>
+                <div class="settings-row-desc" id="diarization-preset-desc">Balanced preset for typical meetings</div>
+              </div>
+              <select id="diarization-preset-sel" class="model-config-sel" onchange="setDiarizationPreset(this.value)">
+              </select>
+            </div>
+          </div>
+          <div class="settings-group" id="ap-diarization-params">
+            <!-- Populated dynamically by JS -->
+          </div>
+          <div class="ap-reset-all-wrap">
+            <button class="ap-reset-all-btn" onclick="resetSection('diarization')">
+              <i class="fa-solid fa-rotate-right"></i> Reset all to defaults
+            </button>
+          </div>
+        </div>
+
+        <!-- Reanalysis (Batch Pipeline) -->
+        <div class="settings-panel" id="section-reanalysis">
+          <p class="settings-row-desc" style="margin:0 0 10px;font-size:11px;color:var(--fg-muted)">
+            Batch processing settings for reanalysis. Uses HuggingFace transformers
+            + pyannote for higher accuracy than real-time processing. These settings
+            are independent of the live transcription and diarization settings.
+          </p>
+          <div class="settings-group" id="ap-reanalysis-params">
+            <!-- Populated dynamically by JS -->
+          </div>
+          <div class="ap-reset-all-wrap">
+            <button class="ap-reset-all-btn" onclick="resetReanalysisParams()">
+              <i class="fa-solid fa-rotate-right"></i> Reset all to defaults
+            </button>
+          </div>
+        </div>
+
+        <!-- Auto Gain -->
+        <div class="settings-panel" id="section-agc">
+          <p class="settings-row-desc" style="margin:0 0 10px;font-size:11px;color:var(--fg-muted)">
+            Gently boosts quiet audio sources to a consistent level. Useful when
+            meeting participants have mismatched volumes.
+          </p>
+          <div class="settings-group" id="ap-agc-params">
+            <!-- Populated dynamically by JS -->
+          </div>
+          <div class="ap-reset-all-wrap">
+            <button class="ap-reset-all-btn" onclick="resetSection('auto_gain')">
+              <i class="fa-solid fa-rotate-right"></i> Reset all to defaults
+            </button>
+          </div>
+        </div>
+
+        <!-- Echo Cancellation -->
+        <div class="settings-panel" id="section-echo">
+          <p class="settings-row-desc" style="margin:0 0 10px;font-size:11px;color:var(--fg-muted)">
+            Uses WebRTC AEC to remove speaker audio that bleeds into the microphone.
+            Leave disabled if you use headphones.
+          </p>
+          <div class="settings-group" id="ap-echo-params">
+            <!-- Populated dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- Screen Recording -->
+        <div class="settings-panel" id="section-screen">
+          <p class="settings-row-desc" style="margin:0 0 10px;font-size:11px;color:var(--fg-muted)">
+            Records your screen as an MP4 video during meetings using FFmpeg.
+            Enable below and select a display in the sidebar.
+          </p>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">FFmpeg</div>
+                <div class="settings-row-desc">Required for screen recording</div>
+              </div>
+              <span class="settings-info-val" id="settings-ffmpeg-status">checking...</span>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Preset</div>
+                <div class="settings-row-desc" id="screen-preset-desc">Performance profile for encoding</div>
+              </div>
+              <select id="screen-preset-sel" class="model-config-sel" onchange="setScreenPreset(this.value)">
+              </select>
+            </div>
+          </div>
+          <div class="settings-group" id="ap-screen-params">
+            <!-- Populated dynamically by JS (same system as audio params) -->
+          </div>
+          <div class="ap-reset-all-wrap">
+            <button class="ap-reset-all-btn" onclick="resetSection('screen_recording')">
+              <i class="fa-solid fa-rotate-right"></i> Reset all to defaults
+            </button>
+          </div>
+        </div>
+
+        <!-- Recording Reminders -->
+        <div class="settings-panel" id="section-reminders">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Quiet Recording Toast</div>
+                <div class="settings-row-desc">Windows notification when a recording goes quiet</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="quiet-prompt-enabled" onchange="saveQuietReminderSettings()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Quiet Threshold</div>
+                <div class="settings-row-desc">Seconds of no audio before showing the toast</div>
+              </div>
+              <input type="number" id="quiet-prompt-threshold" class="settings-number-input" min="5" max="600" step="5" onchange="saveQuietReminderSettings()">
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Audio Floor</div>
+                <div class="settings-row-desc">RMS level treated as activity</div>
+              </div>
+              <input type="number" id="quiet-prompt-rms" class="settings-number-input" min="0.001" max="0.2" step="0.001" onchange="saveQuietReminderSettings()">
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Require No Transcript</div>
+                <div class="settings-row-desc">Only notify when both audio and transcript are quiet</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="quiet-prompt-transcript" onchange="saveQuietReminderSettings()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Reminder Cooldown</div>
+                <div class="settings-row-desc">Minimum seconds between repeated quiet toasts</div>
+              </div>
+              <input type="number" id="quiet-prompt-cooldown" class="settings-number-input" min="0" max="1800" step="30" onchange="saveQuietReminderSettings()">
+            </div>
+          </div>
+        </div>
+
+        <!-- System -->
+        <div class="settings-panel" id="section-system">
+          <div class="settings-group-title">App Theme</div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Appearance</div>
+                <div class="settings-row-desc">Match the system theme, or force light/dark</div>
+              </div>
+              <div class="theme-mode-seg" role="radiogroup" aria-label="Appearance mode">
+                <button class="theme-mode-btn" data-mode="system" onclick="setThemeMode('system')" title="Match system"><i class="fa-solid fa-desktop"></i>System</button>
+                <button class="theme-mode-btn" data-mode="light" onclick="setThemeMode('light')" title="Light mode"><i class="fa-solid fa-sun"></i>Light</button>
+                <button class="theme-mode-btn" data-mode="dark" onclick="setThemeMode('dark')" title="Dark mode"><i class="fa-solid fa-moon"></i>Dark</button>
+              </div>
+            </div>
+            <div class="settings-row theme-accent-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Accent Color</div>
+                <div class="settings-row-desc">Applied to buttons, links, selections, and highlights</div>
+              </div>
+              <div class="theme-accent-grid" id="theme-accent-grid">
+                <button class="theme-accent-btn" data-accent="blue" onclick="setThemeAccent('blue')" style="--swatch:#58a6ff;--swatch-a:#58a6ff;--swatch-b:#1f6feb;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Blue</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="ocean" onclick="setThemeAccent('ocean')" style="--swatch:#39c5cf;--swatch-a:#39c5cf;--swatch-b:#1b8f97;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Ocean</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="forest" onclick="setThemeAccent('forest')" style="--swatch:#3fb950;--swatch-a:#3fb950;--swatch-b:#238636;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Forest</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="sunset" onclick="setThemeAccent('sunset')" style="--swatch:#ff9f4e;--swatch-a:#ff9f4e;--swatch-b:#c56a18;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Sunset</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="rose" onclick="setThemeAccent('rose')" style="--swatch:#f778ba;--swatch-a:#f778ba;--swatch-b:#bf4b8a;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Rose</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="violet" onclick="setThemeAccent('violet')" style="--swatch:#bc8cff;--swatch-a:#bc8cff;--swatch-b:#8957e5;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Violet</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="amber" onclick="setThemeAccent('amber')" style="--swatch:#e3b341;--swatch-a:#e3b341;--swatch-b:#bb8009;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Amber</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="crimson" onclick="setThemeAccent('crimson')" style="--swatch:#ff7b72;--swatch-a:#ff7b72;--swatch-b:#c53d34;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Crimson</span>
+                </button>
+                <button class="theme-accent-btn" data-accent="mono" onclick="setThemeAccent('mono')" style="--swatch:#8b949e;--swatch-a:#e6edf3;--swatch-b:#484f58;">
+                  <span class="theme-accent-swatch"></span><span class="theme-accent-name">Mono</span>
+                </button>
+                <button class="theme-accent-btn theme-accent-custom" data-accent="custom" onclick="setThemeAccent('custom')">
+                  <span class="theme-accent-swatch theme-accent-swatch-rainbow"></span><span class="theme-accent-name">Custom</span>
+                </button>
+              </div>
+
+              <!-- Custom picker panel (revealed when Custom is active) -->
+              <div class="theme-custom-panel hidden" id="theme-custom-panel">
+                <div class="theme-custom-row">
+                  <label class="theme-custom-label">Accent color</label>
+                  <div class="theme-custom-color-row">
+                    <input type="color" class="theme-custom-color" id="theme-custom-accent-picker" value="#58a6ff" oninput="updateCustomAccent(this.value)">
+                    <input type="text" class="theme-custom-hex" id="theme-custom-accent-hex" value="#58a6ff" maxlength="7" oninput="updateCustomAccentFromHex(this.value)" spellcheck="false">
+                    <button class="theme-custom-reset" onclick="resetCustomTheme()" title="Reset to defaults"><i class="fa-solid fa-rotate-left"></i></button>
+                  </div>
+                </div>
+                <div class="theme-custom-row">
+                  <label class="theme-custom-label">Surface tint <span class="theme-custom-val" id="theme-custom-strength-val">30%</span></label>
+                  <input type="range" class="theme-custom-slider" id="theme-custom-strength" min="0" max="100" step="5" value="30" oninput="updateCustomStrength(this.value)">
+                </div>
+                <div class="theme-custom-hint">Derived automatically: darker accent for hovers, accent tint on backgrounds, matching borders.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-group-title">Hardware &amp; Startup</div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">GPU Acceleration</div>
+                <div class="settings-row-desc">CUDA available for transcription &amp; diarization</div>
+              </div>
+              <span class="settings-info-val" id="settings-cuda-status">checking...</span>
+            </div>
+            <div class="settings-row" id="startup-row" style="display:none">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Launch at Startup</div>
+                <div class="settings-row-desc">Open Meeting Assistant when you log in</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="startup-toggle" onchange="setStartupLaunch(this.checked)">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-group-title">Storage</div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Data Folder</div>
+                <div class="settings-row-desc">
+                  Where recordings, databases, and settings are stored.
+                  Point this at OneDrive/Dropbox/etc. to sync data across machines.
+                </div>
+                <div class="settings-row-desc settings-row-mono" id="data-folder-current">…</div>
+              </div>
+              <div class="settings-row-actions">
+                <button class="btn-settings-action" id="data-folder-pick-btn" onclick="pickDataFolder()">Choose…</button>
+                <button class="btn-settings-action btn-settings-secondary" id="data-folder-reset-btn" onclick="resetDataFolder()" style="display:none">Reset to default</button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group-title">Updates</div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Updates</div>
+                <div class="settings-row-desc" id="settings-update-status"></div>
+              </div>
+              <button class="btn-settings-action" id="check-update-btn" onclick="checkForUpdates()">Check for Updates</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Changelog -->
+        <div class="settings-panel" id="section-changelog">
+          <div class="changelog-header">
+            <div class="changelog-header-text">
+              <div class="changelog-title">
+                <i class="fa-solid fa-clock-rotate-left changelog-title-icon"></i>
+                <span>Recent updates</span>
+              </div>
+              <div class="changelog-meta" id="changelog-meta"></div>
+            </div>
+            <div class="changelog-header-actions">
+              <button class="btn-settings-action btn-settings-secondary"
+                      onclick="previewWhatsNew()"
+                      title="Preview the What's New popup using the latest commit">
+                <i class="fa-solid fa-eye"></i> Show popup
+              </button>
+              <button class="btn-settings-action" id="changelog-refresh-btn"
+                      onclick="refreshChangelog()" title="Re-parse git history">
+                <i class="fa-solid fa-rotate"></i> Refresh
+              </button>
+            </div>
+          </div>
+          <div class="changelog-body" id="changelog-body">
+            <div class="changelog-empty">Loading…</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>

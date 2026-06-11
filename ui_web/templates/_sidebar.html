@@ -1,0 +1,159 @@
+{# Shared sidebar markup for home + session pages.
+   Behavior is driven entirely by app.js; markup must stay in lockstep. #}
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-header-pinned">
+        <button class="icon-btn new-session-btn" onclick="newSession()" title="New session"><i class="fa-solid fa-plus"></i></button>
+        <button class="icon-btn sidebar-toggle-btn" id="sidebar-close-btn" onclick="toggleSidebar()" title="Collapse sidebar"><i class="fa-solid fa-bars"></i></button>
+      </div>
+      <div class="sidebar-header-row">
+        <span class="sidebar-title">Sessions</span>
+        <div class="sidebar-header-tools">
+          <button class="icon-btn folder-btn" onclick="createFolder()" title="New folder"><i class="fa-solid fa-folder-plus"></i></button>
+          <button class="icon-btn fingerprint-btn" onclick="openFingerprintPanel()" title="Voice Library"><i class="fa-solid fa-waveform-lines"></i></button>
+          <button class="icon-btn multiselect-btn" id="sidebar-multiselect-btn" onclick="toggleMultiselect()" title="Multiselect sessions"><i class="fa-solid fa-list-check"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-bulk-bar hidden" id="sidebar-bulk-bar">
+      <span class="sidebar-bulk-count" id="sidebar-bulk-count">0 selected</span>
+      <button class="sidebar-bulk-btn" id="sidebar-bulk-retitle" onclick="bulkRetitle()" title="Regenerate titles with AI"><i class="fa-solid fa-arrows-rotate"></i> Titles</button>
+      <button class="sidebar-bulk-btn sidebar-bulk-delete" onclick="bulkDelete()"><i class="fa-solid fa-trash"></i> Delete</button>
+      <button class="sidebar-bulk-btn sidebar-bulk-clear" onclick="clearSidebarSelection()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="sidebar-search" id="sidebar-search">
+      <div class="sidebar-search-wrap">
+        <i class="fa-solid fa-magnifying-glass sidebar-search-icon"></i>
+        <input type="text" id="sidebar-search-input" placeholder="Search sessions…"
+               oninput="_onSidebarSearch(this.value)" autocomplete="off" spellcheck="false">
+        <button class="sidebar-search-clear hidden" id="sidebar-search-clear"
+                onclick="_clearSidebarSearch()"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="sidebar-filter-btn" id="sidebar-filter-btn"
+                title="Filter sessions" onclick="_toggleSidebarFilter(event)"><i class="fa-solid fa-filter"></i></button>
+      </div>
+    </div>
+    <div class="sidebar-filter-popover hidden" id="sidebar-filter-popover" role="dialog" aria-label="Session filters"></div>
+    <div class="sidebar-body" id="session-list">
+      <p class="sidebar-empty">No past sessions yet.</p>
+    </div>
+    <div class="sidebar-pane" id="model-config">
+      <button class="sidebar-pane-toggle" onclick="toggleSidebarPane('models')">
+        <div class="nav-menu-left">
+            <i class="fa-solid fa-microchip sidebar-pane-icon"></i>
+            <span class="sidebar-pane-label">Models</span>
+        </div>
+        <span class="sidebar-pane-arrow" id="pane-arrow-models">
+        <i class="fa-solid fa-chevron-right"></i></span>
+      </button>
+      <div class="sidebar-pane-body hidden" id="pane-body-models">
+        <div class="model-config-row">
+          <label class="model-config-lbl">Whisper</label>
+          <select id="whisper-preset-sel" class="model-config-sel" onchange="changeWhisperPreset(this.value)">
+          </select>
+        </div>
+        <div class="model-config-row">
+          <label class="model-config-lbl">Diarizer</label>
+          <select id="diarizer-device-sel" class="model-config-sel" onchange="changeDiarizerDevice(this.value)">
+          </select>
+        </div>
+        <div class="model-config-row hidden" id="diarization-enabled-row">
+          <label class="model-config-lbl">Speaker ID</label>
+          <button class="icon-btn active" id="diarization-toggle-btn"
+                  onclick="toggleDiarizationEnabled()" title="Enable/disable speaker diarization">On</button>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-pane" id="audio-viz-pane">
+      <button class="sidebar-pane-toggle" onclick="toggleSidebarPane('audio')">
+          <div class="nav-menu-left">
+            <i class="fa-solid fa-sliders sidebar-pane-icon"></i><span class="sidebar-pane-label">Input Devices</span>
+          </div>
+          <span class="sidebar-pane-arrow" id="pane-arrow-audio">
+          <i class="fa-solid fa-chevron-down"></i></span>
+      </button>
+      <div class="sidebar-pane-body" id="pane-body-audio">
+      <!-- Desktop device + gain -->
+      <div class="viz-device-row">
+        <label class="viz-device-lbl viz-lbl-desktop">Desktop</label>
+        <select id="viz-loopback-sel" class="viz-select" onchange="saveDeviceSelection()">
+          <option value="">- loading -</option>
+        </select>
+        <button class="icon-btn viz-refresh-btn" onclick="loadAudioDevices()" title="Refresh device list"><i class="fa-solid fa-rotate-right"></i></button>
+      </div>
+      <div class="viz-gain-row">
+        <div class="gain-group-left">
+            <label class="viz-gain-lbl viz-lbl-desktop">Gain</label>
+            <span id="viz-lb-gain-val" class="viz-gain-val viz-lbl-desktop">1.0×</span>
+        </div>
+        <input type="range" id="viz-lb-gain" class="viz-gain-slider" min="0.25" max="8" step="0.05" value="1" oninput="onGainInput('lb', this.value)">
+      </div>
+
+      <!-- Waveform canvas + level meter -->
+      <div class="viz-canvas-row">
+        <canvas id="viz-canvas"></canvas>
+        <div class="viz-level-meter" id="viz-level-meter">
+          <div class="viz-meter-track">
+            <div class="viz-meter-fill viz-meter-lb" id="viz-meter-lb"></div>
+          </div>
+          <div class="viz-meter-track">
+            <div class="viz-meter-fill viz-meter-mic" id="viz-meter-mic"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mic gain + device -->
+      <div class="viz-gain-row">
+        <div class="gain-group-left">
+            <label class="viz-gain-lbl viz-lbl-mic">Gain</label>
+            <span id="viz-mic-gain-val" class="viz-gain-val viz-lbl-mic">1.0×</span>
+        </div>
+            <input type="range" id="viz-mic-gain" class="viz-gain-slider" min="0.25" max="8" step="0.05" value="1" oninput="onGainInput('mic', this.value)">
+      </div>
+      <div class="viz-device-row">
+        <label class="viz-device-lbl viz-lbl-mic">Mic</label>
+        <select id="viz-mic-sel" class="viz-select" onchange="saveDeviceSelection()">
+          <option value="-2">Browser Mic (this tab)</option>
+          <option value="-1">None</option>
+        </select>
+      </div>
+
+      <div class="viz-btn-row">
+        <button id="viz-test-btn" class="btn viz-test-btn" onclick="toggleAudioTest()">
+          <i class="fa-solid fa-play"></i> Test Audio
+        </button>
+        <button id="viz-autodetect-btn" class="btn viz-test-btn viz-autodetect-btn" onclick="autoDetectDevices()" title="Auto-detect best audio devices">
+          <i class="fa-duotone fa-wand-magic-sparkles"></i>
+        </button>
+      </div>
+      <div id="agc-debug" class="agc-debug" style="display:none">
+        <div class="agc-debug-title">AGC Debug</div>
+        <div class="agc-debug-grid">
+          <div class="agc-debug-col" id="agc-debug-lb"></div>
+          <div class="agc-debug-col" id="agc-debug-mic"></div>
+        </div>
+      </div>
+      </div><!-- /pane-body-audio -->
+    </div>
+    <div class="sidebar-pane" id="screen-capture-section">
+      <button class="sidebar-pane-toggle" onclick="toggleSidebarPane('screen')">
+      <div class="nav-menu-left">
+        <i class="fa-solid fa-display sidebar-pane-icon"></i>
+        <span class="sidebar-pane-label">Screen Recording</span>
+      </div>
+        <span class="sidebar-pane-actions">
+          <label class="toggle-switch toggle-switch-sm" onclick="event.stopPropagation()">
+            <input type="checkbox" id="screen-record-toggle" onchange="toggleScreenRecordEnabled(this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="sidebar-pane-arrow" id="pane-arrow-screen"><i class="fa-solid fa-chevron-right"></i></span>
+        </span>
+      </button>
+      <div class="sidebar-pane-body hidden" id="pane-body-screen">
+        <div class="screen-display-grid" id="screen-display-grid">
+          <!-- Populated by JS: clickable display thumbnails -->
+        </div>
+        <div class="screen-capture-status" id="screen-capture-status"></div>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
