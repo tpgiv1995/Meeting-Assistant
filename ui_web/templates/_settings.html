@@ -507,6 +507,23 @@
                   <span class="toggle-slider"></span>
                 </label>
               </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Detect Teams &amp; packaged apps</div>
+                  <div class="settings-row-desc">
+                    New Teams and Slack huddles only show up via Windows audio APIs, not
+                    the standard mic registry — this is what catches them. On by default.
+                    It runs in an isolated worker that pauses and self-recovers if your
+                    audio stack hiccups. <strong>Only turn this off if you experience
+                    instability;</strong> without it, auto-record still catches Zoom, Webex,
+                    and browser calls.
+                  </div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="autorecord-session" onchange="saveAutoRecordSettings()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
             </div>
           </div>
           <div class="settings-group-title">Obsidian Export</div>

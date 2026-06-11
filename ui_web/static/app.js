@@ -15659,6 +15659,8 @@ async function loadAutoRecordSettings() {
     document.getElementById('autorecord-apps').value = st.apps || '';
     document.getElementById('autorecord-delay').value = st.stop_delay_sec ?? 20;
     document.getElementById('autorecord-notify').checked = st.notify !== false;
+    const sess = document.getElementById('autorecord-session');
+    if (sess) sess.checked = st.session_detection === true;
     const status = document.getElementById('autorecord-status');
     if (!st.enabled) {
       status.textContent = '';
@@ -15682,6 +15684,7 @@ function saveAutoRecordSettings() {
     auto_record_apps: document.getElementById('autorecord-apps')?.value || '',
     auto_record_stop_delay_sec: parseFloat(document.getElementById('autorecord-delay')?.value || '20'),
     auto_record_notify: document.getElementById('autorecord-notify')?.checked !== false,
+    auto_record_session_detection: document.getElementById('autorecord-session')?.checked === true,
   };
   Object.assign(_prefs, updates);
   fetch('/api/preferences', {

@@ -979,6 +979,10 @@ def _auto_record_config() -> dict:
         "apps": str(s.get("auto_record_apps") or ""),
         "stop_delay_sec": s.get("auto_record_stop_delay_sec", 20),
         "notify": bool(s.get("auto_record_notify", True)),
+        # Native packaged-app (Teams) detection — opt-in. Its COM audio
+        # enumeration can fault on some machines, so it defaults off and the
+        # watcher self-disables it (persisting False here) if it ever crashes.
+        "session_detection": bool(s.get("auto_record_session_detection")),
     }
 
 
@@ -1091,6 +1095,7 @@ def auto_record_status():
         "apps": cfg["apps"],
         "stop_delay_sec": cfg["stop_delay_sec"],
         "notify": cfg["notify"],
+        "session_detection": cfg["session_detection"],
         "in_call": bool(aw.in_call) if aw else False,
         "current_apps": list(aw.current_apps) if aw else [],
         "disarmed": _auto_record["disarmed"],

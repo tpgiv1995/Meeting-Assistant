@@ -65,6 +65,14 @@ DEFAULTS: dict = {
     "auto_record_apps": "teams, zoom, webex, slack, chrome, msedge, firefox",
     "auto_record_stop_delay_sec": 20,
     "auto_record_notify": True,
+    # Detect packaged apps (new Teams, Slack huddles) live via Windows audio
+    # session enumeration — the ONLY live signal for MSIX apps, since they don't
+    # update the mic registry until a call ends. ON by default (it's the whole
+    # point of auto-record for Teams users). The native COM path is isolated in
+    # a worker subprocess with self-healing backoff so a flaky audio stack can't
+    # crash-loop. Can be turned off in Settings if a machine proves unstable;
+    # auto-record still catches classic apps (Zoom, Webex, browsers) either way.
+    "auto_record_session_detection": True,
 
     # Quiet recording reminder
     "quiet_prompt_enabled": True,

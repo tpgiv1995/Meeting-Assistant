@@ -79,13 +79,30 @@ _SELF_KEYS = _self_keys()
 # disposable subprocess (mic_session_worker.py). If the worker crashes or
 # hangs we kill it, fall back to registry-only detection, and retry later.
 
-_WORKER_RESTART_BACKOFF_SEC = 60
 _WORKER_REPLY_TIMEOUT_SEC = 3.0
+# Session enumeration is the expensive/risky native-COM path. Poll it far less
+# often than the cheap registry check (which the watcher runs every POLL_SEC),
+# so a flaky audio stack is touched ~4x/min, not 30x. Teams calls last minutes,
+# so 15s detection latency is fine.
+_SESSION_POLL_SEC = 15.0
+# Self-healing backoff. Native AUDIOSES.DLL faults can't be caught in Python
+# (they crash the worker process, not raise), so the worker is isolated in a
+# subprocess. Respawning immediately after a crash creates a tight loop that
+# pressures the kernel — on a fragile machine that escalated to a BSOD. So
+# after a crash we pause the SESSION signal with an exponential backoff
+# (30s → 1m → 2m … capped) and RESUME automatically; a single healthy poll
+# resets it. We never permanently disable Teams detection — a transient device
+# glitch must not silently kill the feature.
+_WORKER_BASE_BACKOFF_SEC = 30.0
+_WORKER_MAX_BACKOFF_SEC = 600.0
 
 _worker_lock = threading.Lock()
 _worker = None            # subprocess.Popen | None
 _worker_queue = None      # queue.Queue of stdout lines
-_worker_next_spawn = 0.0  # monotonic gate for restart backoff
+_worker_next_spawn = 0.0  # monotonic gate: no respawn before this time
+_worker_consecutive_crashes = 0  # drives the backoff; reset on a healthy poll
+_last_session_poll = 0.0  # monotonic time of last actual worker poll
+_session_cache: list[str] = []  # last worker result, reused between polls
 
 
 def _spawn_session_worker():
@@ -114,47 +131,71 @@ def _spawn_session_worker():
     log.info("call-watch", f"Session worker started (pid {proc.pid}).")
 
 
-def _kill_session_worker() -> None:
+def _kill_session_worker(backoff_sec: float = 0.0) -> None:
     global _worker, _worker_queue, _worker_next_spawn
     if _worker is not None:
+        # Kill the whole tree, not just the Popen handle: under a uv venv,
+        # sys.executable is a shim that re-execs the real interpreter as a
+        # child, so killing only the shim leaves the real worker orphaned
+        # (still enumerating COM audio — exactly the leak we must avoid).
         try:
-            _worker.kill()
+            import psutil
+            parent = psutil.Process(_worker.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            parent.kill()
         except Exception:
-            pass
+            try:
+                _worker.kill()
+            except Exception:
+                pass
     _worker, _worker_queue = None, None
-    _worker_next_spawn = time.monotonic() + _WORKER_RESTART_BACKOFF_SEC
+    if backoff_sec:
+        _worker_next_spawn = time.monotonic() + backoff_sec
 
 
 def _list_session_mic_apps() -> list[str]:
     """Exe stems of processes with an active WASAPI capture session.
 
-    Primary signal — sees packaged (MSIX) apps like new Teams live, which
-    the ConsentStore registry does not. Returns [] when the worker is down;
-    the registry signal still covers classic apps meanwhile.
+    Primary signal for packaged (MSIX) apps like new Teams, which the
+    ConsentStore registry can't see live. Throttled to _SESSION_POLL_SEC and
+    crash-isolated in a subprocess. On a worker fault the session signal pauses
+    with exponential backoff and resumes automatically — it never permanently
+    disables. Returns the cached result between polls / during backoff.
     """
     import json as _json
-    import queue
-    global _worker_next_spawn
+    global _worker_next_spawn, _worker_consecutive_crashes, _last_session_poll, _session_cache
 
     with _worker_lock:
+        now = time.monotonic()
+        if now - _last_session_poll < _SESSION_POLL_SEC:
+            return list(_session_cache)  # throttle: reuse last result
+        _last_session_poll = now
         try:
             if _worker is None or _worker.poll() is not None:
-                if time.monotonic() < _worker_next_spawn:
-                    return []
+                if now < _worker_next_spawn:
+                    return list(_session_cache)  # in backoff window
                 _spawn_session_worker()
             _worker.stdin.write("poll\n")
             _worker.stdin.flush()
             line = _worker_queue.get(timeout=_WORKER_REPLY_TIMEOUT_SEC)
             result = _json.loads(line)
-            return result if isinstance(result, list) else []
-        except (queue.Empty, OSError, ValueError) as e:
-            log.warn("call-watch", f"Session worker unresponsive ({type(e).__name__}) - "
-                                   f"restarting in {_WORKER_RESTART_BACKOFF_SEC}s; registry-only until then.")
-            _kill_session_worker()
-            return []
+            _session_cache = result if isinstance(result, list) else []
+            _worker_consecutive_crashes = 0  # healthy poll — clear the backoff
+            return list(_session_cache)
         except Exception as e:
-            log.warn("call-watch", f"Session worker failed ({e}) - registry-only until restart.")
-            _kill_session_worker()
+            _worker_consecutive_crashes += 1
+            backoff = min(_WORKER_MAX_BACKOFF_SEC,
+                          _WORKER_BASE_BACKOFF_SEC * (2 ** (_worker_consecutive_crashes - 1)))
+            _kill_session_worker(backoff)
+            _session_cache = []
+            log.warn("call-watch",
+                     f"Session worker fault #{_worker_consecutive_crashes} ({type(e).__name__}) — "
+                     f"Teams/packaged detection paused {int(backoff)}s, then auto-resumes "
+                     f"(Zoom/Webex/browser detection unaffected).")
             return []
 
 
@@ -212,11 +253,18 @@ def _list_registry_mic_apps() -> list[str]:
     return active
 
 
-def list_active_mic_apps() -> list[str]:
-    """Merged ids of apps currently holding the microphone (both signals)."""
+def list_active_mic_apps(session_detection: bool = False) -> list[str]:
+    """Merged ids of apps currently holding the microphone.
+
+    The registry signal (cheap, safe) always runs. The native session signal
+    runs only when ``session_detection`` is True — it's opt-in because its
+    COM audio enumeration can fault on some machines (see the circuit breaker).
+    """
     if not CALL_WATCH_AVAILABLE:
         return []
-    merged = _list_session_mic_apps() + _list_registry_mic_apps()
+    merged = _list_registry_mic_apps()
+    if session_detection:
+        merged = merged + _list_session_mic_apps()
     return list(dict.fromkeys(merged))
 
 
@@ -244,8 +292,10 @@ class CallWatcher:
     turns True only after START_CONFIRM_POLLS consecutive matches and turns
     False only after the mic has been idle for ``stop_delay_sec`` (read from
     get_config each poll, so settings changes apply live). get_config must
-    return {"enabled": bool, "apps": str, "stop_delay_sec": float}; while
-    disabled the watcher idles without reading the registry.
+    return {"enabled": bool, "apps": str, "stop_delay_sec": float,
+    "session_detection": bool}; ``session_detection`` opts into the native
+    packaged-app (Teams) signal — off by default because it can fault on some
+    machines. While disabled the watcher idles without reading anything.
     """
 
     def __init__(self, get_config: Callable[[], dict], on_tick: Callable[[bool, list[str]], None]):
@@ -265,6 +315,7 @@ class CallWatcher:
 
     def stop(self) -> None:
         self._stop_evt.set()
+        _kill_session_worker()  # don't leave the COM worker running
 
     def _run(self) -> None:
         consecutive_active = 0
@@ -280,7 +331,9 @@ class CallWatcher:
                         self.current_apps = []
                     continue
 
-                matched = match_apps(list_active_mic_apps(), cfg.get("apps", ""))
+                matched = match_apps(
+                    list_active_mic_apps(session_detection=bool(cfg.get("session_detection"))),
+                    cfg.get("apps", ""))
                 stop_delay = float(cfg.get("stop_delay_sec", 20))
 
                 if matched:
