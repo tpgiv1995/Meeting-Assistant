@@ -534,15 +534,27 @@ class AudioCapture:
         # while the mixer is still running is a race condition that can corrupt
         # the file or crash on a write to a closed handle.
         self.stop_wav()
-        # Park streams + PyAudio instance in the graveyard instead of closing them.
-        # Pa_StopStream / Pa_CloseStream on a WASAPI loopback stream calls
-        # ExitProcess() at the C level on Windows, killing the whole process.
-        # Setting these to None would also trigger __del__ → close() on the stream
-        # objects, so we keep live references here and let PortAudio's own atexit
-        # handler (registered at PyAudio() construction time) clean up on exit.
-        for s in (self._loopback_stream, self._mic_stream):
-            if s is not None:
-                _stream_graveyard.append(s)
+        # The microphone stream is a normal WASAPI *input* stream, so closing it
+        # is safe and releases the device immediately — clearing the taskbar
+        # "microphone in use" indicator the moment recording stops. (The
+        # ExitProcess-on-close crash is specific to WASAPI *loopback* streams;
+        # a regular input stream closes cleanly.) Threads have already joined
+        # above, so nothing is reading from it.
+        if self._mic_stream is not None:
+            try:
+                self._mic_stream.stop_stream()
+                self._mic_stream.close()
+            except Exception:
+                pass
+            self._mic_stream = None
+        # Park the loopback stream + PyAudio instance in the graveyard instead
+        # of closing them. Pa_StopStream / Pa_CloseStream on a WASAPI loopback
+        # stream calls ExitProcess() at the C level on Windows, killing the
+        # whole process. Setting it to None would also trigger __del__ →
+        # close(), so we keep a live reference here and let PortAudio's own
+        # atexit handler clean up on exit.
+        if self._loopback_stream is not None:
+            _stream_graveyard.append(self._loopback_stream)
         if self._pa is not None:
             _stream_graveyard.append(self._pa)
         self._loopback_stream = None

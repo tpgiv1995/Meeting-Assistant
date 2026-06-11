@@ -56,6 +56,16 @@ DEFAULTS: dict = {
     "screen_display": 0,
     "screen_preset": "performance",
 
+    # Obsidian export: drop finalized transcripts as markdown into a vault folder
+    "obsidian_export_enabled": False,
+    "obsidian_export_dir": "",
+
+    # Auto-record: start/stop recording when a meeting app uses the microphone
+    "auto_record_enabled": False,
+    "auto_record_apps": "teams, zoom, webex, slack, chrome, msedge, firefox",
+    "auto_record_stop_delay_sec": 20,
+    "auto_record_notify": True,
+
     # Quiet recording reminder
     "quiet_prompt_enabled": True,
     "quiet_prompt_threshold_sec": 30,

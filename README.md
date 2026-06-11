@@ -16,6 +16,7 @@ Meeting Assistant captures desktop and microphone audio simultaneously, transcri
 
 | | |
 |---|---|
+| **Auto-Record** | Detects when a meeting app starts using the microphone and records automatically — works with Teams, Zoom, Webex, browser calls, anything (Windows) |
 | **Live Transcription** | Real-time speech-to-text via faster-whisper with configurable model sizes |
 | **Speaker Diarization** | Neural speaker identification using pyannote/diart streaming pipeline |
 | **AI Summaries** | Auto-updating summaries that adapt structure to meeting content |
@@ -285,6 +286,34 @@ Meeting Assistant supports two AI providers, switchable at runtime via Settings:
 ### Chat
 
 Full conversational interface with access to the complete transcript, summary, and session metadata. Responses stream in real time via SSE. The AI includes timestamp references so you can jump to relevant moments.
+
+---
+
+## Auto-Record
+
+When enabled (Settings → System → Auto-Record), Meeting Assistant watches which apps are actively using the microphone and starts recording automatically whenever an allowlisted app opens it. Detection merges two signals: WASAPI capture-session enumeration (primary — required for packaged apps like new Teams, whose registry timestamps are only written after a call ends) and the mic-usage registry behind the taskbar privacy indicator (fallback). No bot joins the call, and it works identically for Teams, Zoom, Webex, Slack huddles, and browser-based meetings (Meet, etc.), because it keys off mic usage rather than any specific meeting platform.
+
+- **Start**: an allowlisted app holds the mic for ~4 seconds (filters out voice-typing blips)
+- **Stop**: the mic goes idle for the configured stop delay (default 20 s, rides out reconnects)
+- **Manual override**: stopping an auto-recording mid-call disarms auto-record until that call ends; recordings you start manually are never auto-stopped
+- **Device resilience**: stale saved device indices fall back to auto-detection, and a saved browser-mic preference is bypassed in favor of a real WASAPI mic (the browser mic only streams while a page is open)
+- **Notifications**: optional toasts on auto start/stop
+
+Pair it with **Launch at Startup** for fully hands-off capture of every meeting. The app's own recording mic is excluded from detection, so it never mistakes itself for a call.
+
+Windows only — detection reads `HKCU\...\CapabilityAccessManager\ConsentStore\microphone`, which has no macOS equivalent.
+
+---
+
+## Obsidian Export
+
+When enabled (Settings → System → Obsidian Export), every finalized session is dropped into a vault folder as a markdown file with YAML frontmatter (title, date, duration, speakers, session id), the AI summary, and the full speaker-labelled transcript:
+
+```markdown
+**[0:05] Pat Gordon:** The main goal today is to review the quarterly roadmap...
+```
+
+The export stays in sync: renaming speakers, reassigning segments, applying Speaker Cleanup, retitling, or reanalyzing a session re-writes the file (debounced, so bulk edits collapse into one write). Noise segments are excluded. Empty sessions are never exported. Files are named `YYYY-MM-DD Title [sessionid].md` — retitles replace the old file rather than duplicating it. Use **Export all now** to backfill existing sessions.
 
 ---
 

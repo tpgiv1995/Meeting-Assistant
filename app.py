@@ -252,6 +252,13 @@ def _status_payload(extra: dict | None = None) -> dict:
         recording_ready, recording_ready_reason = _recording_prereqs_locked()
     payload["recording_ready"] = recording_ready
     payload["recording_ready_reason"] = recording_ready_reason
+    aw = _auto_record["watcher"]
+    payload["auto_record"] = {
+        "supported": aw is not None,
+        "enabled": bool(settings.get("auto_record_enabled")),
+        "in_call": bool(aw.in_call) if aw else False,
+        "active_session": _auto_record["session_id"],
+    }
     if extra:
         payload.update(extra)
     return payload
@@ -856,6 +863,15 @@ def _start_background_initializers() -> None:
     # visit. Non-blocking; if the network is slow/unreachable the fallback
     # static lists are used until the fetch completes.
     threading.Thread(target=_get_all_models_live, daemon=True).start()
+    # Auto-record call watcher (Windows): cheap registry polling, no-op until
+    # the auto_record_enabled setting is turned on.
+    try:
+        from ui_desktop.call_watch import CALL_WATCH_AVAILABLE, CallWatcher
+        if CALL_WATCH_AVAILABLE:
+            _auto_record["watcher"] = CallWatcher(_auto_record_config, _auto_record_tick)
+            _auto_record["watcher"].start()
+    except Exception as e:
+        log.warn("auto-record", f"Call watcher unavailable: {e}")
 
 
 def _level_push_loop() -> None:
@@ -942,6 +958,323 @@ def _quiet_prompt_loop() -> None:
 
 
 threading.Thread(target=_quiet_prompt_loop, daemon=True).start()
+
+
+# ── Auto-record (call detection) ──────────────────────────────────────────────
+
+_auto_record = {
+    "session_id": None,    # session auto-started by the watcher (None = none)
+    "disarmed": False,     # user manually stopped mid-call → hold off until idle
+    "starting": False,     # a start attempt is in flight
+    "watcher": None,       # CallWatcher instance (None off-Windows)
+    "fail_count": 0,       # consecutive failed start attempts this call
+    "backoff_until": 0.0,  # monotonic time before which no retry is attempted
+}
+
+
+def _auto_record_config() -> dict:
+    s = settings.load()
+    return {
+        "enabled": bool(s.get("auto_record_enabled")),
+        "apps": str(s.get("auto_record_apps") or ""),
+        "stop_delay_sec": s.get("auto_record_stop_delay_sec", 20),
+        "notify": bool(s.get("auto_record_notify", True)),
+    }
+
+
+def _auto_record_api(path: str, body: dict) -> dict | None:
+    """POST to our own HTTP API so auto start/stop runs the exact same code
+    path as the Record button (session, WAV, SSE, screen recording, titling)."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            f"{_server_url}{path}", data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        return json.loads(resp.read())
+    except Exception as e:
+        log.warn("auto-record", f"Internal API call {path} failed: {e}")
+        return None
+
+
+def _auto_record_start(apps: list[str]) -> None:
+    """Start a recording for the detected call. Runs on its own thread because
+    model loading can take minutes right after login."""
+    try:
+        deadline = time.monotonic() + 180
+        while True:
+            watcher = _auto_record["watcher"]
+            if watcher is None or not watcher.in_call or not _auto_record_config()["enabled"]:
+                return  # call ended (or feature disabled) while waiting
+            with _state_lock:
+                if _state["is_recording"] or _state["is_testing"]:
+                    return  # user beat us to it, or an audio test is running
+                ready, _reason = _recording_prereqs_locked()
+            if ready:
+                break
+            if time.monotonic() > deadline:
+                log.warn("auto-record", "Models not ready after 180 s - giving up on this call.")
+                return
+            time.sleep(2)
+
+        resp = _auto_record_api("/api/recording/start", {"auto_record": True})
+        if not resp or "session_id" not in resp:
+            # Back off so a persistent failure (e.g. no audio devices at all)
+            # doesn't create an orphan session every poll for the whole call.
+            _auto_record["fail_count"] += 1
+            if _auto_record["fail_count"] >= 3:
+                _auto_record["disarmed"] = True
+                log.warn("auto-record", "3 failed start attempts - giving up until the call ends.")
+            else:
+                _auto_record["backoff_until"] = time.monotonic() + 30
+                log.warn("auto-record", "Start attempt failed - retrying in 30 s.")
+            return
+        _auto_record["fail_count"] = 0
+        _auto_record["session_id"] = resp["session_id"]
+        pretty = ", ".join(apps) if apps else "a meeting app"
+        log.info("auto-record", f"Recording auto-started for call in {pretty}.")
+        if _auto_record_config()["notify"]:
+            notifications.notify(
+                "Recording started",
+                f"Detected a call ({pretty}). Click to open Meeting Assistant.",
+                on_click=lambda _arg: webbrowser.open(_server_url),
+            )
+    finally:
+        _auto_record["starting"] = False
+
+
+def _auto_record_tick(in_call: bool, apps: list[str]) -> None:
+    """Recording policy, evaluated on every watcher poll (~2 s)."""
+    auto_sid = _auto_record["session_id"]
+    with _state_lock:
+        recording   = _state["is_recording"]
+        current_sid = _state["session_id"]
+
+    if in_call:
+        if auto_sid and (not recording or current_sid != auto_sid):
+            # Our auto session was stopped manually mid-call: stand down until
+            # the call actually ends so we don't fight the user.
+            _auto_record["session_id"] = None
+            _auto_record["disarmed"] = True
+            log.info("auto-record", "Manual stop during call - disarmed until mic goes idle.")
+        elif (not recording and not _auto_record["disarmed"]
+                and not _auto_record["starting"]
+                and time.monotonic() >= _auto_record["backoff_until"]):
+            _auto_record["starting"] = True
+            threading.Thread(target=_auto_record_start, args=(apps,), daemon=True).start()
+    else:
+        _auto_record["disarmed"] = False
+        _auto_record["fail_count"] = 0
+        _auto_record["backoff_until"] = 0.0
+        if auto_sid:
+            _auto_record["session_id"] = None
+            if recording and current_sid == auto_sid:
+                resp = _auto_record_api("/api/recording/stop", {})
+                if resp:
+                    log.info("auto-record", f"Recording auto-stopped - session {auto_sid}.")
+                    if _auto_record_config()["notify"]:
+                        notifications.notify(
+                            "Recording saved",
+                            "The call ended. Transcript and summary are ready.",
+                            on_click=lambda _arg: webbrowser.open(_server_url),
+                        )
+
+
+@app.route("/api/auto-record/status")
+def auto_record_status():
+    aw = _auto_record["watcher"]
+    cfg = _auto_record_config()
+    return jsonify({
+        "supported": aw is not None,
+        "enabled": cfg["enabled"],
+        "apps": cfg["apps"],
+        "stop_delay_sec": cfg["stop_delay_sec"],
+        "notify": cfg["notify"],
+        "in_call": bool(aw.in_call) if aw else False,
+        "current_apps": list(aw.current_apps) if aw else [],
+        "disarmed": _auto_record["disarmed"],
+        "active_session": _auto_record["session_id"],
+    })
+
+
+# ── Obsidian export ───────────────────────────────────────────────────────────
+# Drops each finalized session into an Obsidian vault folder as markdown, and
+# keeps the file current when the transcript is edited afterwards (speaker
+# renames, segment reassignments, cleanup, reanalysis, retitles).
+
+_obsidian_timers: dict[str, threading.Timer] = {}
+_obsidian_timers_lock = threading.Lock()
+
+
+def _obsidian_export_dir() -> Path | None:
+    """Resolve the configured vault folder, or None if export is off/broken."""
+    if not settings.get("obsidian_export_enabled"):
+        return None
+    raw = str(settings.get("obsidian_export_dir") or "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log.warn("obsidian", f"Export dir unavailable: {e}")
+        return None
+    return p
+
+
+def _safe_filename(name: str, max_len: int = 80) -> str:
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name).strip().rstrip(".")
+    return name[:max_len].rstrip() or "Untitled"
+
+
+def _session_local_dt(iso: str):
+    """Session timestamps are naive UTC (storage._now); convert to local."""
+    from datetime import datetime as _dt, timezone as _tz
+    return _dt.fromisoformat(iso).replace(tzinfo=_tz.utc).astimezone()
+
+
+def _build_obsidian_markdown(sess: dict) -> str | None:
+    """Render a session as a vault-ready markdown doc. None = nothing worth exporting."""
+    from datetime import datetime as _dt
+
+    speaker_labels = sess.get("speaker_labels") or {}
+    lines: list[str] = []
+    speakers_seen: list[str] = []
+    for seg in sess.get("segments", []):
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        # Mirror _fmt_segment's precedence: per-segment override, then
+        # speaker-key reassignment, then the session speaker name.
+        label = seg.get("label_override")
+        if not label:
+            source = seg.get("source_override") or seg["source"]
+            label = speaker_labels.get(source) or _SOURCE_LABELS.get(source, source)
+        if label.strip().strip("[]").lower() == "noise":
+            continue  # hidden by default in the UI; keep the vault doc clean
+        if label not in speakers_seen:
+            speakers_seen.append(label)
+        start = seg.get("start_time", 0) or 0
+        lines.append(f"**[{_fmt_time(start)}] {label}:** {text}")
+    if not lines:
+        return None
+
+    title = sess.get("title") or "Untitled meeting"
+    started = sess.get("started_at") or ""
+    ended = sess.get("ended_at") or ""
+    date = started[:10]
+    started_local = started
+    duration = ""
+    try:
+        if started:
+            local = _session_local_dt(started)
+            date = local.date().isoformat()
+            started_local = local.isoformat(timespec="seconds")
+        if started and ended:
+            secs = (_dt.fromisoformat(ended) - _dt.fromisoformat(started)).total_seconds()
+            duration = _fmt_time(max(0.0, secs))
+    except ValueError:
+        pass
+
+    front = [
+        "---",
+        f'title: "{title.replace(chr(34), chr(39))}"',
+        "type: meeting-transcript",
+        f"date: {date}",
+        f"started: {started_local}",
+        f"duration: {duration}",
+        "speakers: [" + ", ".join(f'"{s}"' for s in speakers_seen) + "]",
+        f"session_id: {sess['id']}",
+        "source: Meeting Assistant",
+        f"exported: {_dt.now().astimezone().isoformat(timespec='seconds')}",
+        "---",
+        "",
+        f"# {title}",
+        "",
+    ]
+    body: list[str] = []
+    summary = (sess.get("summary") or "").strip()
+    if summary:
+        body += ["## Summary", "", summary, ""]
+    body += ["## Transcript", ""]
+    return "\n".join(front) + "\n" + "\n".join(body) + "\n" + "\n\n".join(lines) + "\n"
+
+
+def _obsidian_export_session(session_id: str) -> None:
+    try:
+        out_dir = _obsidian_export_dir()
+        if out_dir is None:
+            return
+        sess = storage.get_session(session_id)
+        if not sess or not sess.get("ended_at"):
+            return  # only export finalized sessions
+        md = _build_obsidian_markdown(sess)
+        if md is None:
+            return  # empty / all-noise sessions don't pollute the vault
+        short = session_id[:8]
+        started = sess.get("started_at") or ""
+        try:
+            date = _session_local_dt(started).date().isoformat() if started else ""
+        except ValueError:
+            date = started[:10]
+        fname = f"{date} {_safe_filename(sess.get('title') or 'Untitled meeting')} [{short}].md"
+        target = out_dir / fname
+        # A retitle changes the filename; replace the previous export for
+        # this session rather than leaving a stale duplicate behind.
+        for old in out_dir.glob(f"* [{short}].md"):
+            if old != target:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(md, encoding="utf-8")
+        tmp.replace(target)
+        log.info("obsidian", f"Exported session {short} -> {target.name}")
+    except Exception as e:
+        log.warn("obsidian", f"Export failed for {session_id}: {e}")
+
+
+def _queue_obsidian_export(session_id: str, delay: float = 4.0) -> None:
+    """Debounced re-export: bulk edits (multi-segment reassigns, cleanup
+    apply, merge cascades) collapse into a single file write."""
+    if not settings.get("obsidian_export_enabled"):
+        return
+    with _obsidian_timers_lock:
+        prev = _obsidian_timers.pop(session_id, None)
+        if prev:
+            prev.cancel()
+        timer = threading.Timer(delay, _obsidian_export_session, args=(session_id,))
+        timer.daemon = True
+        _obsidian_timers[session_id] = timer
+        timer.start()
+
+
+@app.route("/api/obsidian/status")
+def obsidian_status():
+    return jsonify({
+        "enabled": bool(settings.get("obsidian_export_enabled")),
+        "dir": str(settings.get("obsidian_export_dir") or ""),
+    })
+
+
+@app.route("/api/obsidian/export-all", methods=["POST"])
+def obsidian_export_all():
+    """One-shot backfill: export every finalized session with content."""
+    out_dir = _obsidian_export_dir()
+    if out_dir is None:
+        return jsonify({"error": "Obsidian export is not enabled / configured"}), 400
+    exported = skipped = 0
+    for s in storage.list_sessions():
+        before = len(list(out_dir.glob(f"* [{s['id'][:8]}].md")))
+        _obsidian_export_session(s["id"])
+        after = len(list(out_dir.glob(f"* [{s['id'][:8]}].md")))
+        if after:
+            exported += 1
+        elif not before:
+            skipped += 1
+    return jsonify({"ok": True, "exported": exported, "skipped": skipped, "dir": str(out_dir)})
 
 
 # ── Speaker fingerprint helpers ───────────────────────────────────────────────
@@ -1419,6 +1752,7 @@ def start_recording():
     mic_device        = body.get("mic_device")         # int | None | -1
     ffmpeg_mic_name   = body.get("ffmpeg_mic_name")    # str | None (for mic_device=-3)
     resume_session_id = body.get("resume_session_id")  # str | None
+    auto_record       = bool(body.get("auto_record"))  # started by the call watcher
 
     # Fall back to saved user preferences when the caller didn't specify devices
     # (e.g. recording started from the home page which has no device selectors).
@@ -1431,7 +1765,12 @@ def start_recording():
                 pass
         if mic_device is None and _saved.get("mic_device"):
             _mic_pref = str(_saved["mic_device"])
-            if _mic_pref.startswith("ffmpeg:"):
+            if auto_record and _mic_pref == "-2":
+                # Browser mic only streams while a web page is open and sending
+                # getUserMedia chunks; an auto-started recording may have no
+                # page open, so let AudioCapture find a WASAPI mic instead.
+                log.info("recording", "Auto-record: browser-mic preference bypassed - using WASAPI auto-detect.")
+            elif _mic_pref.startswith("ffmpeg:"):
                 mic_device = -3
                 ffmpeg_mic_name = ffmpeg_mic_name or _mic_pref[7:]
             else:
@@ -1484,33 +1823,72 @@ def start_recording():
     log.info("recording", f"Device selection: loopback={loopback_device}, "
              f"mic={mic_device}, ffmpeg_mic={ffmpeg_mic_name!r}")
 
-    capture = AudioCapture(_audio_queue)
-
-    # Apply echo cancellation setting to the new capture instance
+    # Apply echo cancellation setting to each new capture instance
     from capture_audio.params import resolve_audio_params
     _ec_params = resolve_audio_params()
-    capture.echo_cancel_enabled = bool(int(_ec_params.get("echo_cancel_enabled", 0)))
-    capture.agc_loopback_enabled = bool(int(_ec_params.get("agc_loopback_enabled", 0)))
-    capture.agc_mic_enabled = bool(int(_ec_params.get("agc_mic_enabled", 0)))
-    capture.agc_target_rms = float(_ec_params.get("agc_target_rms", 0.15))
-    capture.agc_max_gain = float(_ec_params.get("agc_max_gain", 4.0))
-    capture.agc_gate_threshold = float(_ec_params.get("agc_gate_threshold", 0.01))
+
+    def _new_capture() -> AudioCapture:
+        cap = AudioCapture(_audio_queue)
+        cap.echo_cancel_enabled  = bool(int(_ec_params.get("echo_cancel_enabled", 0)))
+        cap.agc_loopback_enabled = bool(int(_ec_params.get("agc_loopback_enabled", 0)))
+        cap.agc_mic_enabled      = bool(int(_ec_params.get("agc_mic_enabled", 0)))
+        cap.agc_target_rms       = float(_ec_params.get("agc_target_rms", 0.15))
+        cap.agc_max_gain         = float(_ec_params.get("agc_max_gain", 4.0))
+        cap.agc_gate_threshold   = float(_ec_params.get("agc_gate_threshold", 0.01))
+        return cap
 
     # Set up WAV recording - append to existing file on resume
     wav_dir = paths.audio_dir()
     wav_path = str(wav_dir / f"{session_id}.wav")
-    capture.start_wav(wav_path, append=bool(resume_session_id))
-    try:
-        capture.start(
-            loopback_index=loopback_device,
-            mic_index=mic_device,
-            ffmpeg_mic_name=ffmpeg_mic_name,
-        )
-    except Exception as e:
-        capture.stop_wav()
+
+    # Saved device indices go stale whenever Windows re-enumerates audio
+    # devices (docking, Bluetooth, driver updates), so retry with
+    # auto-detection before failing. Without this an unattended
+    # (auto-record) start dies on a stale settings value.
+    attempts = [(loopback_device, mic_device)]
+    if loopback_device is not None:
+        attempts.append((None, mic_device))
+    if isinstance(mic_device, int) and mic_device >= 0:
+        attempts.append((None, None))
+    attempts = list(dict.fromkeys(attempts))
+
+    capture = None
+    _start_err: Exception | None = None
+    _used_lb = None
+    for _lb, _mic in attempts:
+        capture = _new_capture()
+        capture.start_wav(wav_path, append=bool(resume_session_id))
+        try:
+            capture.start(
+                loopback_index=_lb,
+                mic_index=_mic,
+                ffmpeg_mic_name=ffmpeg_mic_name,
+            )
+            _start_err = None
+            _used_lb = _lb
+            break
+        except Exception as e:
+            _start_err = e
+            try:
+                capture.stop_wav()
+            except Exception:
+                pass
+            if (_lb, _mic) != attempts[-1]:
+                log.warn("recording", f"Capture start failed ({e}) - retrying with auto-detected devices.")
+    if _start_err is not None:
         if not resume_session_id:
             storage.end_session(session_id)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(_start_err)}), 500
+
+    # Self-heal a stale saved loopback index: if the configured device failed
+    # but auto-detection (loopback_index=None) succeeded, clear the saved value
+    # so future starts go straight to auto-detect instead of failing first.
+    # Device indices shift whenever Windows re-enumerates audio hardware.
+    if loopback_device is not None and _used_lb is None:
+        if str(settings.get("loopback_device", "")) == str(loopback_device):
+            settings.put("loopback_device", "")
+            log.info("recording", f"Cleared stale saved loopback device {loopback_device} - "
+                                  f"auto-detect will be used from now on.")
 
     _transcriber.start(capture.sample_rate, capture.channels,
                        next_speaker_label=next_speaker_label)
@@ -1729,6 +2107,10 @@ def stop_recording():
                     if title:
                         storage.update_session_title(sid, title, user_set=False)
                         _push("session_title", {"session_id": sid, "title": title})
+            # Drop the finalized transcript into the Obsidian vault (after
+            # title generation so the file carries the real title).
+            if sid:
+                _obsidian_export_session(sid)
         finally:
             _recording_cleanup_done.set()
 
@@ -1883,13 +2265,15 @@ def set_startup():
     lnk = _startup_lnk_path()
     if enable:
         root = Path(__file__).parent
-        bat  = root / "launch.bat"
+        vbs  = root / "launch_hidden.vbs"
         icon = root / "ui_web" / "static" / "images" / "logo.ico"
+        # wscript + launch_hidden.vbs runs the server with no console window,
+        # so login startup leaves nothing on the taskbar (tray icon only).
         ps = (
             f"$ws = New-Object -ComObject WScript.Shell; "
             f"$s = $ws.CreateShortcut('{lnk}'); "
-            f"$s.TargetPath = 'cmd.exe'; "
-            f"$s.Arguments = '/c \"\"{bat}\"\"'; "
+            f"$s.TargetPath = 'wscript.exe'; "
+            f"$s.Arguments = '\"\"{vbs}\"\"'; "
             f"$s.WorkingDirectory = '{root}'; "
             f"$s.WindowStyle = 7; "
             + (f"$s.IconLocation = '{icon}, 0'; " if icon.exists() else "")
@@ -3961,6 +4345,9 @@ def update_segment_label(seg_id: int):
                 log.info("fingerprint", f"Trained from segment override: {label!r} (seg {seg_id})")
         _fp_executor.submit(_train_from_override)
 
+    seg_row = storage.get_segment(seg_id)
+    if seg_row:
+        _queue_obsidian_export(seg_row["session_id"])
     return jsonify({"ok": True})
 
 
@@ -4141,6 +4528,7 @@ def update_speaker_label(session_id: str):
         )
     # ── End auto-link ──────────────────────────────────────────────────────────
 
+    _queue_obsidian_export(session_id)
     return jsonify({"ok": True, "speakers": updated_speakers})
 
 
@@ -4205,6 +4593,7 @@ def apply_speaker_clusters(session_id: str):
             "color": sp["color"],
         })
 
+    _queue_obsidian_export(session_id)
     return jsonify({"ok": True, **result})
 
 
@@ -4662,6 +5051,7 @@ def _run_reanalysis(session_id: str, wav_path: str, custom_prompt: str) -> None:
             _transcriber.process_wav_file(wav_path)
 
         _push("reanalysis_done", {"session_id": session_id})
+        _obsidian_export_session(session_id)
     except Exception as e:
         log.error("reanalysis", f"{e}")
         import traceback; traceback.print_exc()
@@ -4802,6 +5192,7 @@ def patch_session(session_id: str):
     # Any user-initiated PATCH locks the title so post-recording auto-gen
     # (and any future auto-title pass) won't clobber it.
     storage.update_session_title(session_id, title, user_set=True)
+    _queue_obsidian_export(session_id)
     return jsonify({"ok": True})
 
 
@@ -6166,8 +6557,11 @@ def update_apply():
             storage.end_session(sid)
         time.sleep(0.5)  # let the HTTP response reach the browser
 
-        # Launch via Start Menu shortcut so the experience matches a normal start
-        lnk_path = (
+        # Prefer the hidden startup shortcut (no console window) when the user
+        # has launch-at-login enabled; otherwise the Start Menu shortcut so
+        # the experience matches a normal start.
+        startup_lnk = _startup_lnk_path()
+        lnk_path = startup_lnk if startup_lnk.exists() else (
             Path(os.environ.get("APPDATA", ""))
             / "Microsoft" / "Windows" / "Start Menu" / "Programs"
             / "Meeting Assistant.lnk"

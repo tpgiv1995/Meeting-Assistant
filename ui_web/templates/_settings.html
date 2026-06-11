@@ -464,6 +464,84 @@
               </label>
             </div>
           </div>
+          <div id="autorecord-section" style="display:none">
+            <div class="settings-group-title">Auto-Record</div>
+            <div class="settings-group">
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Auto-record calls</div>
+                  <div class="settings-row-desc">
+                    Start recording automatically when a meeting app uses the microphone
+                    (Teams, Zoom, browser calls, etc.) and stop when the call ends.
+                  </div>
+                  <div class="settings-row-desc" id="autorecord-status"></div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="autorecord-toggle" onchange="saveAutoRecordSettings()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Trigger apps</div>
+                  <div class="settings-row-desc">Comma-separated names matched against apps holding the mic</div>
+                </div>
+                <input type="text" class="settings-number-input" id="autorecord-apps"
+                       style="width:280px" onchange="saveAutoRecordSettings()" spellcheck="false">
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Stop delay</div>
+                  <div class="settings-row-desc">Seconds the mic must be idle before the recording stops</div>
+                </div>
+                <input type="number" class="settings-number-input" id="autorecord-delay"
+                       min="5" max="300" step="5" onchange="saveAutoRecordSettings()">
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <div class="settings-row-label">Notifications</div>
+                  <div class="settings-row-desc">Show a toast when auto-recording starts and stops</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="autorecord-notify" onchange="saveAutoRecordSettings()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group-title">Obsidian Export</div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Export transcripts to Obsidian</div>
+                <div class="settings-row-desc">
+                  Drop each finalized session into a vault folder as markdown.
+                  Files update automatically when you rename speakers or edit the transcript.
+                </div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="obsidian-toggle" onchange="saveObsidianSettings()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Vault folder</div>
+                <div class="settings-row-desc">Absolute path to the export folder inside your vault</div>
+              </div>
+              <input type="text" class="settings-number-input" id="obsidian-dir"
+                     style="width:340px" onchange="saveObsidianSettings()" spellcheck="false">
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <div class="settings-row-label">Backfill</div>
+                <div class="settings-row-desc" id="obsidian-export-status">Export every existing session to the vault folder</div>
+              </div>
+              <div class="settings-row-actions">
+                <button class="btn-settings-action" id="obsidian-export-all-btn" onclick="obsidianExportAll()">Export all now</button>
+              </div>
+            </div>
+          </div>
           <div class="settings-group-title">Storage</div>
           <div class="settings-group">
             <div class="settings-row">

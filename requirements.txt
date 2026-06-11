@@ -61,3 +61,9 @@ sentence-transformers>=2.2.0
 pystray>=0.19.0
 Pillow>=10.0.0
 windows-toasts>=1.3.0; sys_platform == "win32"
+
+# ── Auto-record call detection ────────────────────────────────────────────────
+# WASAPI capture-session enumeration - detects which apps have the mic open.
+# The ConsentStore registry alone misses packaged (MSIX) apps like new Teams,
+# whose timestamps are only written when the call ends. See ui_desktop/call_watch.py.
+pycaw>=20240210; sys_platform == "win32"

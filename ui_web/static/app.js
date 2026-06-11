@@ -14631,6 +14631,12 @@ async function openSettings() {
     }
   } catch (_) {}
 
+  // Auto-record section (Windows only - mic-usage call detection)
+  loadAutoRecordSettings();
+
+  // Obsidian export section
+  loadObsidianSettings();
+
   // Audio params - load eagerly so panels are ready when clicked
   _apRefresh().then(() => _syncScreenToggle());
 
@@ -15637,6 +15643,95 @@ async function setStartupLaunch(enabled) {
     });
   } catch (_) {
     document.getElementById('startup-toggle').checked = !enabled;
+  }
+}
+
+// ── Auto-record ──────────────────────────────────────────────────────────
+
+async function loadAutoRecordSettings() {
+  const section = document.getElementById('autorecord-section');
+  if (!section) return;
+  try {
+    const st = await fetch('/api/auto-record/status').then(r => r.json());
+    if (!st.supported) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    document.getElementById('autorecord-toggle').checked = !!st.enabled;
+    document.getElementById('autorecord-apps').value = st.apps || '';
+    document.getElementById('autorecord-delay').value = st.stop_delay_sec ?? 20;
+    document.getElementById('autorecord-notify').checked = st.notify !== false;
+    const status = document.getElementById('autorecord-status');
+    if (!st.enabled) {
+      status.textContent = '';
+    } else if (st.active_session) {
+      status.textContent = 'Recording a call right now.';
+    } else if (st.in_call) {
+      status.textContent = st.disarmed
+        ? 'Call detected - paused until it ends (recording was stopped manually).'
+        : 'Call detected.';
+    } else {
+      status.textContent = 'Watching for calls.';
+    }
+  } catch (_) {
+    section.style.display = 'none';
+  }
+}
+
+function saveAutoRecordSettings() {
+  const updates = {
+    auto_record_enabled: document.getElementById('autorecord-toggle')?.checked === true,
+    auto_record_apps: document.getElementById('autorecord-apps')?.value || '',
+    auto_record_stop_delay_sec: parseFloat(document.getElementById('autorecord-delay')?.value || '20'),
+    auto_record_notify: document.getElementById('autorecord-notify')?.checked !== false,
+  };
+  Object.assign(_prefs, updates);
+  fetch('/api/preferences', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  }).then(() => loadAutoRecordSettings()).catch(() => {});
+}
+
+// ── Obsidian export ──────────────────────────────────────────────────────
+
+async function loadObsidianSettings() {
+  try {
+    const st = await fetch('/api/obsidian/status').then(r => r.json());
+    document.getElementById('obsidian-toggle').checked = !!st.enabled;
+    document.getElementById('obsidian-dir').value = st.dir || '';
+  } catch (_) {}
+}
+
+function saveObsidianSettings() {
+  const updates = {
+    obsidian_export_enabled: document.getElementById('obsidian-toggle')?.checked === true,
+    obsidian_export_dir: document.getElementById('obsidian-dir')?.value || '',
+  };
+  Object.assign(_prefs, updates);
+  fetch('/api/preferences', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  }).catch(() => {});
+}
+
+async function obsidianExportAll() {
+  const btn = document.getElementById('obsidian-export-all-btn');
+  const status = document.getElementById('obsidian-export-status');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+  try {
+    const res = await fetch('/api/obsidian/export-all', { method: 'POST' }).then(r => r.json());
+    if (res.error) {
+      status.textContent = res.error;
+    } else {
+      status.textContent = `Exported ${res.exported} session${res.exported === 1 ? '' : 's'} (${res.skipped} empty skipped)`;
+    }
+  } catch (_) {
+    status.textContent = 'Export failed - is the vault folder reachable?';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Export all now';
   }
 }
 
